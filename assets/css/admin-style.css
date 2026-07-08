@@ -1,0 +1,37 @@
+.csi-container { max-width: 1000px; }
+.csi-card { background: #fff; border: 1px solid #ccd0d4; padding: 20px; margin-top: 20px; }
+
+#csi-tree { max-height: 600px; overflow-y: auto; border: 1px solid #dcdcde; padding: 10px; background: #fafafa; }
+.csi-node { margin: 2px 0; }
+.csi-folder > label strong { color: #1d2327; }
+.csi-folder.csi-excluded > label strong { color: #a7aaad; text-decoration: line-through; }
+.csi-children { margin-left: 22px; border-left: 1px dotted #dcdcde; padding-left: 10px; }
+.csi-page { color: #3c434a; }
+
+.csi-badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 3px; margin-left: 4px; cursor: help; }
+.csi-badge-excluded { background: #f0f0f1; color: #646970; }
+.csi-badge-large { background: #fcf0f1; color: #cc1818; }
+.csi-badge-stub { background: #f0f6fc; color: #2271b1; }
+.csi-badge-draft { background: #fcf9e8; color: #996800; }
+.csi-badge-card { background: #edfaef; color: #007017; }
+.csi-badge-card-review { background: #fcf0f1; color: #cc1818; }
+
+.csi-progress { margin-top: 15px; }
+.csi-progress-bar { background: #dcdcde; height: 20px; border-radius: 3px; overflow: hidden; }
+.csi-progress-bar-fill { background: #2271b1; height: 100%; width: 0%; transition: width .2s ease; }
+.csi-progress-text { margin-top: 5px; }
+
+#csi-results-content { max-height: 400px; overflow-y: auto; background: #fafafa; border: 1px solid #dcdcde; padding: 10px; margin-top: 10px; }
+.csi-log-item { font-size: 12px; padding: 2px 0; }
+.csi-log-error { color: #cc1818; }
+
+.csi-diff-summary { font-weight: 600; margin-bottom: 6px; }
+.csi-diff-list { max-height: 400px; overflow-y: auto; border: 1px solid #dcdcde; background: #fafafa; padding: 10px; margin-bottom: 10px; }
+.csi-diff-item { padding: 4px 0; border-bottom: 1px solid #f0f0f1; }
+.csi-diff-item:last-child { border-bottom: none; }
+.csi-diff-fields { color: #646970; font-size: 12px; }
+.csi-diff-view-toggle { margin-left: 8px; font-size: 12px; }
+.csi-diff-detail { margin: 8px 0 4px 24px; padding: 8px; background: #fff; border: 1px solid #dcdcde; }
+.csi-diff-detail .diff { width: 100%; }
+.csi-diff-field { margin-bottom: 10px; }
+.csi-diff-added, .csi-diff-removed { font-size: 12px; color: #646970; }
