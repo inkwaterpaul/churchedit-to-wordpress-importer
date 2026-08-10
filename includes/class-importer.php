@@ -101,6 +101,15 @@ class CSI_Importer {
             'menu_order'   => isset($folder['folder_order']) ? (int) $folder['folder_order'] : 0,
         );
 
+        // Compare & Update's targeted-update pass only wants content refreshed —
+        // an existing page's publish status and place in the tree are left as
+        // site editors currently have them, not silently reset to match the
+        // source export. wp_update_post() merges omitted keys from the
+        // existing post, so dropping them here is enough to preserve them.
+        if ($existing && !empty($options['preserve_on_update'])) {
+            unset($post_data['post_status'], $post_data['post_parent']);
+        }
+
         if ($existing) {
             $post_data['ID'] = $existing;
             $post_id = wp_update_post($post_data, true);
@@ -162,6 +171,14 @@ class CSI_Importer {
 
         if (!empty($page['first_published_date'])) {
             $post_data['post_date'] = $page['first_published_date'];
+        }
+
+        // See import_stub() above for why this is dropped rather than set.
+        if ($existing && !empty($options['preserve_on_update'])) {
+            unset($post_data['post_status'], $post_data['post_parent']);
+            // Report the status the post actually keeps, not the one that
+            // would have been applied had it not been preserved.
+            $status = get_post($existing)->post_status;
         }
 
         if ($existing) {

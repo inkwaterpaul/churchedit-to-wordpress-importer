@@ -618,8 +618,8 @@
         $('#csi-diff-summary-' + bucketKey).html('<p>' + summary + '</p>');
 
         var html = '';
-        if (!data.changed.length) {
-            html += '<p><em>No changed items.</em></p>';
+        if (!data.changed.length && !data.added.length) {
+            html += '<p><em>No changed or new items.</em></p>';
         }
         data.changed.forEach(function (item) {
             html += '<div class="csi-diff-item">' +
@@ -631,11 +631,19 @@
                 '<div class="csi-diff-detail" style="display:none;"></div>' +
                 '</div>';
         });
-        if (data.added.length) {
-            html += '<p class="csi-diff-added"><strong>' + data.added.length + ' new:</strong> ' +
-                data.added.map(function (a) { return esc(a.title || a.ref); }).join(', ') +
-                ' — will be created by the import step above, not by this compare step.</p>';
-        }
+        // "Added" items get a checkbox too, same as changed ones — "Update
+        // Selected" creates them (the import handlers insert whenever no
+        // existing post is found for the ref/id, same as the main import
+        // steps do), it doesn't only update. There's no prior version to
+        // diff against, so no "view changes" link here.
+        data.added.forEach(function (item) {
+            html += '<div class="csi-diff-item">' +
+                '<label><input type="checkbox" class="csi-diff-checkbox" checked' +
+                ' data-ref="' + esc(item.ref) + '" data-id="' + esc(item.id) + '"> ' +
+                esc(item.title || item.ref) +
+                ' <span class="csi-diff-fields csi-diff-new">(new)</span></label>' +
+                '</div>';
+        });
         if (data.removed.length) {
             html += '<p class="csi-diff-removed"><strong>' + data.removed.length + ' no longer in source:</strong> ' +
                 data.removed.map(function (r) { return esc(r.title); }).join(', ') +

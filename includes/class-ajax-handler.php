@@ -375,9 +375,12 @@ class CSI_AJAX_Handler {
             $items = CSI_Vacancy_Importer::get_vacancy_items($resolved, $folder_id);
 
             // Targeted-update pass from Compare & Update: restrict to only
-            // the page_ids the user selected there instead of the whole folder.
+            // the page_ids the user selected there instead of the whole
+            // folder. It's also update-only in intent: existing vacancies
+            // keep their current status, only content changes.
             $only_page_ids = isset($_POST['only_page_ids']) ? array_map('sanitize_text_field', (array) $_POST['only_page_ids']) : array();
-            if (!empty($only_page_ids)) {
+            $is_diff_update = !empty($only_page_ids);
+            if ($is_diff_update) {
                 $only_page_ids = array_flip($only_page_ids);
                 $items = array_values(array_filter($items, function ($item) use ($only_page_ids) {
                     return isset($only_page_ids[$item['page_id']]);
@@ -390,7 +393,8 @@ class CSI_AJAX_Handler {
             $slice      = array_slice($items, $offset, $batch_size);
 
             $options = array(
-                'default_status' => (isset($_POST['default_status']) && in_array($_POST['default_status'], array('draft', 'publish', 'pending'), true)) ? $_POST['default_status'] : 'draft',
+                'default_status'    => (isset($_POST['default_status']) && in_array($_POST['default_status'], array('draft', 'publish', 'pending'), true)) ? $_POST['default_status'] : 'draft',
+                'preserve_on_update' => $is_diff_update,
             );
 
             @set_time_limit(120);
@@ -449,8 +453,11 @@ class CSI_AJAX_Handler {
 
             // Targeted-update pass from Compare & Update: restrict to only the
             // page_ids the user selected there instead of the whole folder.
+            // It's also update-only in intent: existing posts keep their
+            // current status, only content changes.
             $only_page_ids = isset($_POST['only_page_ids']) ? array_map('sanitize_text_field', (array) $_POST['only_page_ids']) : array();
-            if (!empty($only_page_ids)) {
+            $is_diff_update = !empty($only_page_ids);
+            if ($is_diff_update) {
                 $only_page_ids = array_flip($only_page_ids);
                 $page_ids = array_values(array_filter($page_ids, function ($pid) use ($only_page_ids) {
                     return isset($only_page_ids[$pid]);
@@ -463,7 +470,8 @@ class CSI_AJAX_Handler {
             $slice      = array_slice($page_ids, $offset, $batch_size);
 
             $options = array(
-                'default_status' => (isset($_POST['default_status']) && in_array($_POST['default_status'], array('draft', 'publish', 'pending'), true)) ? $_POST['default_status'] : 'draft',
+                'default_status'     => (isset($_POST['default_status']) && in_array($_POST['default_status'], array('draft', 'publish', 'pending'), true)) ? $_POST['default_status'] : 'draft',
+                'preserve_on_update' => $is_diff_update,
             );
 
             @set_time_limit(120);
@@ -566,9 +574,12 @@ class CSI_AJAX_Handler {
 
             // Targeted-update pass from Compare & Update: restrict to only the
             // event_ids the user selected there, and skip the from-date filter
-            // since those events were already picked explicitly.
+            // since those events were already picked explicitly. It's also
+            // update-only in intent: existing events keep their current
+            // status, only content changes.
             $only_event_ids = isset($_POST['only_event_ids']) ? array_map('sanitize_text_field', (array) $_POST['only_event_ids']) : array();
-            if (!empty($only_event_ids)) {
+            $is_diff_update = !empty($only_event_ids);
+            if ($is_diff_update) {
                 $only_event_ids = array_flip($only_event_ids);
                 $events = array_values(array_filter($events, function ($event) use ($only_event_ids) {
                     return isset($only_event_ids[$event['event_id']]);
@@ -587,7 +598,8 @@ class CSI_AJAX_Handler {
             $slice      = array_slice($events, $offset, $batch_size);
 
             $options = array(
-                'default_status' => (isset($_POST['default_status']) && in_array($_POST['default_status'], array('draft', 'publish', 'pending'), true)) ? $_POST['default_status'] : 'draft',
+                'default_status'     => (isset($_POST['default_status']) && in_array($_POST['default_status'], array('draft', 'publish', 'pending'), true)) ? $_POST['default_status'] : 'draft',
+                'preserve_on_update' => $is_diff_update,
             );
 
             @set_time_limit(120);
@@ -959,13 +971,18 @@ class CSI_AJAX_Handler {
             );
 
             // A targeted-update pass (from the Compare & Update step) posts an
-            // explicit list of refs to update rather than a folder/page tree
-            // selection — parent-first ordering isn't needed there since
-            // those refs' parents already exist as WP posts from the
-            // original import.
+            // explicit list of refs to update/create rather than a folder/page
+            // tree selection — parent-first ordering isn't needed there since
+            // those refs' parents already exist as WP posts from the original
+            // import, EXCEPT for a brand-new page whose parent folder node is
+            // *also* newly added and selected in this same pass; that edge
+            // case can land the child under root until run again. It's
+            // update-only in intent for pages that already exist: their
+            // current status and parent are kept, only content changes.
             $only_refs = isset($_POST['refs']) ? array_map('sanitize_text_field', (array) $_POST['refs']) : array();
             if (!empty($only_refs)) {
                 $order = array_values(array_unique($only_refs));
+                $options['preserve_on_update'] = true;
             } else {
                 $order = CSI_Importer::get_import_order($resolved, $selected_folder_ids, $selected_page_ids);
             }

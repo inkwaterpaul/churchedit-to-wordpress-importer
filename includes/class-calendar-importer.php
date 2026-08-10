@@ -78,6 +78,17 @@ class CSI_Calendar_Importer {
 
             $existing = self::find_existing_event($ref);
 
+            // See CSI_Post_Importer::import_post() for why this is dropped
+            // rather than set on a targeted-update pass — tribe_update_event()
+            // flows straight through to wp_update_post(), which merges
+            // omitted keys from the existing post.
+            if ($existing && !empty($options['preserve_on_update'])) {
+                unset($args['post_status']);
+                // Report the status the event actually keeps, not the one
+                // that would have been applied had it not been preserved.
+                $status = get_post($existing)->post_status;
+            }
+
             if ($existing) {
                 $args['ID'] = $existing;
                 $post_id = tribe_update_event($existing, $args);

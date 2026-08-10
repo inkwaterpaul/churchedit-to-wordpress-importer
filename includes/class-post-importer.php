@@ -28,9 +28,23 @@ class CSI_Post_Importer {
             // The block layout pattern (sidebar page-navigation wrapper) is a
             // Pages-only concept — Posts don't use it.
             $content = CSI_Content_Converter::convert($page['page_content']);
-            $status  = (!empty($page['page_access']) && $page['page_access'] !== 'everyone') ? 'draft' : $options['default_status'];
 
             $existing = self::find_existing_post($ref);
+
+            $restricted = !empty($page['page_access']) && $page['page_access'] !== 'everyone';
+            if ($restricted) {
+                $status = 'draft';
+            } elseif (!$existing && !empty($options['preserve_on_update'])) {
+                // A brand-new post surfaced by Compare & Update is, by
+                // definition, content that's already live in ChurchEdit (it's
+                // "added" relative to the last export) — publish it straight
+                // away rather than defaulting to whatever the Posts step's
+                // default-status dropdown happens to be set to, which is
+                // meant for staging a first full import for review.
+                $status = 'publish';
+            } else {
+                $status = $options['default_status'];
+            }
 
             $post_data = array(
                 'post_title'   => wp_strip_all_tags($page['page_title']),
@@ -39,10 +53,27 @@ class CSI_Post_Importer {
                 'post_type'    => 'post',
             );
 
-            if (!empty($page['first_published_date'])) {
-                $post_data['post_date'] = $page['first_published_date'];
-            } elseif (!empty($page['published_date'])) {
-                $post_data['post_date'] = $page['published_date'];
+            $post_date = self::resolve_post_date($page);
+            if ($post_date !== '') {
+                $post_data['post_date'] = $post_date;
+            } elseif (!$existing) {
+                // No source date field survived at all — rather than let
+                // wp_insert_post() silently default to right now with no
+                // trace of why, flag it so a wrong date is at least visible
+                // and traceable back to this page instead of looking like a
+                // correctly-dated import.
+                CSI_Logger::log(0, $ref, 'warning', 'No source publish date found on this page — post_date left to WordPress\'s default (now).');
+            }
+
+            // Compare & Update's targeted-update pass only wants content
+            // refreshed — an existing post's publish status is left as site
+            // editors currently have it. wp_update_post() merges omitted
+            // keys from the existing post, so dropping it here is enough.
+            if ($existing && !empty($options['preserve_on_update'])) {
+                unset($post_data['post_status']);
+                // Report the status the post actually keeps, not the one
+                // that would have been applied had it not been preserved.
+                $status = get_post($existing)->post_status;
             }
 
             if ($existing) {
@@ -90,6 +121,33 @@ class CSI_Post_Importer {
         } catch (Error $e) {
             return array('ref' => 'post:' . $page['page_id'], 'success' => false, 'error' => 'Fatal error: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * ChurchEdit carries several overlapping date columns on `pages` and none
+     * of them are reliably populated on every row — try the most specific
+     * first (when it was actually first published) down to the least
+     * (when the row was merely added), then fall back to the unix-timestamp
+     * columns if even those string dates are empty.
+     *
+     * @return string A 'Y-m-d H:i:s' date, or '' if nothing usable was found.
+     */
+    private static function resolve_post_date($page) {
+        foreach (array('first_published_date', 'published_date', 'publish_date', 'date_added') as $field) {
+            if (!empty($page[$field]) && $page[$field] !== '0000-00-00 00:00:00') {
+                return $page[$field];
+            }
+        }
+        // Last resort: the unix-timestamp columns are UTC-based; site-local
+        // conversion isn't worth the added complexity for what's already a
+        // fallback-of-a-fallback, so this is dated a few hours off on sites
+        // outside UTC rather than left at today's date.
+        foreach (array('publish_unix', 'unix_added') as $field) {
+            if (!empty($page[$field]) && is_numeric($page[$field]) && (int) $page[$field] > 0) {
+                return gmdate('Y-m-d H:i:s', (int) $page[$field]);
+            }
+        }
+        return '';
     }
 
     private static function find_existing_post($ref) {

@@ -94,6 +94,15 @@ class CSI_Vacancy_Importer {
                 'post_type'    => 'vacancy',
             );
 
+            // See CSI_Post_Importer::import_post() for why this is dropped
+            // rather than set on a targeted-update pass.
+            if ($existing && !empty($options['preserve_on_update'])) {
+                unset($post_data['post_status']);
+                // Report the status the post actually keeps, not the one
+                // that would have been applied had it not been preserved.
+                $status = get_post($existing)->post_status;
+            }
+
             if ($existing) {
                 $post_data['ID'] = $existing;
                 $post_id = wp_update_post($post_data, true);

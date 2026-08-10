@@ -296,7 +296,7 @@ class CSI_Admin_UI {
                             <div id="csi-diff-summary-<?php echo esc_attr($csi_bucket_key); ?>" class="csi-diff-summary"></div>
                             <div id="csi-diff-list-<?php echo esc_attr($csi_bucket_key); ?>" class="csi-diff-list"></div>
                             <p>
-                                <label><input type="checkbox" class="csi-diff-select-all" data-bucket="<?php echo esc_attr($csi_bucket_key); ?>"> <?php esc_html_e('Select all changed', 'churchedit-sql-importer'); ?></label>
+                                <label><input type="checkbox" class="csi-diff-select-all" data-bucket="<?php echo esc_attr($csi_bucket_key); ?>"> <?php esc_html_e('Select all changed/new', 'churchedit-sql-importer'); ?></label>
                                 <button type="button" class="button button-primary csi-diff-update-btn"
                                     data-bucket="<?php echo esc_attr($csi_bucket_key); ?>"
                                     data-action="<?php echo esc_attr($csi_bucket['action']); ?>"
