@@ -3,7 +3,7 @@
  * Plugin Name: ChurchEdit SQL Importer
  * Plugin URI: https://inkandwater.co.uk/churchedit-sql-importer
  * Description: Imports a ChurchEdit CMS SQL export into WordPress pages, reconstructing the page hierarchy from ChurchEdit's folders table and converting content to Gutenberg blocks.
- * Version: 1.0.1
+ * Version: 1.0.2
  * Author: Ink & Water
  * Author URI: https://inkandwater.co.uk
  * License: GPL v2 or later
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CSI_VERSION', '1.0.1');
+define('CSI_VERSION', '1.0.2');
 define('CSI_NAME', 'ChurchEdit SQL Importer');
 define('CSI_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('CSI_PLUGIN_URL', plugin_dir_url(__FILE__));

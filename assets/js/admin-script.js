@@ -291,7 +291,10 @@
             totals.pages += r.pages_updated;
             processedSoFar += r.batch_count;
             excludeIds = excludeIds.concat(r.post_ids);
-            r.still_missing.forEach(function (m) { if (missing.indexOf(m) === -1) missing.push(m); });
+            r.still_missing.forEach(function (m) {
+                var isDupe = missing.some(function (x) { return x.filename === m.filename && x.post_id === m.post_id; });
+                if (!isDupe) { missing.push(m); }
+            });
 
             var pct = r.total_pending > 0 ? Math.min(100, Math.round((processedSoFar / r.total_pending) * 100)) : 100;
             $(progressText).text(processedSoFar + ' / ' + r.total_pending + ' post(s) checked — ' +
@@ -307,7 +310,10 @@
                 'Checked ' + processedSoFar + ' post(s). ' +
                 totals.images + ' image(s), ' + totals.docs + ' document(s) linked across ' + totals.pages + ' post(s).';
             if (missing.length) {
-                html += '<br>Still missing from the media library (' + missing.length + '): ' + esc(missing.slice(0, 30).join(', '));
+                var missingList = missing.slice(0, 30).map(function (m) {
+                    return esc(m.filename) + ' (in "' + esc(m.post_title || '(no title)') + '")';
+                }).join(', ');
+                html += '<br>Still missing from the media library (' + missing.length + '): ' + missingList;
             }
             html += '</p></div>';
             $(resultsBox).html(html);

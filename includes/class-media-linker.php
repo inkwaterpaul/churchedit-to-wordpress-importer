@@ -90,7 +90,7 @@ class CSI_Media_Linker {
             self::resolve_page($page_id, $attach_cache, $results);
         }
 
-        $results['still_missing'] = array_values(array_unique($results['still_missing']));
+        $results['still_missing'] = self::dedupe_still_missing($results['still_missing']);
 
         return $results;
     }
@@ -130,7 +130,11 @@ class CSI_Media_Linker {
                     }
                 } else {
                     $still_pending[] = $item;
-                    $results['still_missing'][] = $filename;
+                    $results['still_missing'][] = array(
+                        'filename'   => $filename,
+                        'post_id'    => $page_id,
+                        'post_title' => get_the_title($page_id),
+                    );
                 }
             }
 
@@ -168,7 +172,11 @@ class CSI_Media_Linker {
                     $results['docs_updated']++;
                 } else {
                     $still_pending[] = $item;
-                    $results['still_missing'][] = $filename;
+                    $results['still_missing'][] = array(
+                        'filename'   => $filename,
+                        'post_id'    => $page_id,
+                        'post_title' => get_the_title($page_id),
+                    );
                 }
             }
 
@@ -183,6 +191,26 @@ class CSI_Media_Linker {
             wp_update_post(array('ID' => $page_id, 'post_content' => $content));
             $results['pages_updated']++;
         }
+    }
+
+    /**
+     * De-dupe still-missing entries by filename+post, so a file referenced
+     * more than once in the same post's content is only reported once.
+     * (array_unique() doesn't work here since each entry is an array.)
+     */
+    private static function dedupe_still_missing($entries) {
+        $seen    = array();
+        $deduped = array();
+
+        foreach ($entries as $entry) {
+            $key = $entry['filename'] . '|' . $entry['post_id'];
+            if (!isset($seen[$key])) {
+                $seen[$key] = true;
+                $deduped[]  = $entry;
+            }
+        }
+
+        return $deduped;
     }
 
     /**
