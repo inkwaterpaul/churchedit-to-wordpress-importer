@@ -19,11 +19,14 @@ class CSI_Hierarchy_Resolver {
     const LARGE_FOLDER_THRESHOLD = 100;
 
     /**
-     * @param array $folders Rows from the `folders` table (as assoc arrays)
-     * @param array $pages   Rows from the `pages` table (as assoc arrays)
+     * @param array $folders   Rows from the `folders` table (as assoc arrays)
+     * @param array $pages     Rows from the `pages` table (as assoc arrays)
+     * @param array $page_tags Optional: page_id => [tag name, ...], built from
+     *                         the `tags`/`item_x_tag` tables (see
+     *                         CSI_AJAX_Handler::build_page_tag_names()).
      * @return array{folders: array, pages: array, roots: array}
      */
-    public static function build($folders, $pages) {
+    public static function build($folders, $pages, $page_tags = array()) {
         $folders_by_id = array();
         foreach ($folders as $f) {
             $id = (string) $f['folder_id'];
@@ -65,6 +68,7 @@ class CSI_Hierarchy_Resolver {
             $p['card_review'] = false;
             $p['card_query'] = null;
             $p['parent_ref'] = null; // filled in below
+            $p['tags'] = isset($page_tags[$id]) ? $page_tags[$id] : array();
 
             // Private/restricted in the source system -> draft regardless of folder
             if (!empty($p['page_access']) && $p['page_access'] !== 'everyone') {

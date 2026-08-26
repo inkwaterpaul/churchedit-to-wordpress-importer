@@ -126,6 +126,32 @@ class CSI_AJAX_Handler {
     }
 
     /**
+     * ChurchEdit tags a page via `item_x_tag` (item_id + section='page' ->
+     * tag_id), with the tag's display name living separately in `tags`. Fold
+     * those two tables into a single page_id => [tag name, ...] map so the
+     * importers can just read $page['tags'] without knowing about either
+     * table. Non-'page' sections (documents, events, images, etc.) are
+     * skipped — only pages/posts get tags imported as WP categories.
+     */
+    private static function build_page_tag_names($tags, $item_x_tag) {
+        $tag_names_by_id = array();
+        foreach ($tags as $t) {
+            $tag_names_by_id[$t['id']] = $t['name'];
+        }
+
+        $page_tags = array();
+        foreach ($item_x_tag as $row) {
+            if ($row['section'] !== 'page' || !isset($tag_names_by_id[$row['tag_id']])) {
+                continue;
+            }
+            $page_id = (string) $row['item_id'];
+            $page_tags[$page_id][] = $tag_names_by_id[$row['tag_id']];
+        }
+
+        return $page_tags;
+    }
+
+    /**
      * Filter a full pages diff() result down to one bucket's id set and shape
      * it for the UI: counts + a changed-item list with ref/title/changed
      * fields (title/ref for removed items comes from the OLD row, since
@@ -871,13 +897,14 @@ class CSI_AJAX_Handler {
                 wp_send_json_error(array('message' => __('File not found at that path.', 'churchedit-sql-importer')));
             }
 
-            $tables = CSI_SQL_Dump_Parser::parse_tables($file_path, array('folders', 'pages'));
+            $tables = CSI_SQL_Dump_Parser::parse_tables($file_path, array('folders', 'pages', 'tags', 'item_x_tag'));
             if (is_wp_error($tables)) {
                 ob_end_clean();
                 wp_send_json_error(array('message' => $tables->get_error_message()));
             }
 
-            $resolved = CSI_Hierarchy_Resolver::build($tables['folders'], $tables['pages']);
+            $page_tags = self::build_page_tag_names($tables['tags'], $tables['item_x_tag']);
+            $resolved = CSI_Hierarchy_Resolver::build($tables['folders'], $tables['pages'], $page_tags);
             // Computed once here (not per import batch) since it's the same
             // for the whole run and building it needs the full folders/pages
             // structure that only this cache already holds.

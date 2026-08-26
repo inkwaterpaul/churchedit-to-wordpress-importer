@@ -16,7 +16,11 @@ if (!defined('ABSPATH')) {
 class CSI_Post_Importer {
 
     /**
-     * @param array $page    One row from the `pages` table
+     * @param array $page    One row from the `pages` table, as resolved by
+     *                        CSI_Hierarchy_Resolver::build() — includes a
+     *                        'tags' key (ChurchEdit tag names, from the
+     *                        `tags`/`item_x_tag` tables) that gets imported
+     *                        as WordPress categories.
      * @param array $options ['default_status' => 'draft'|'publish'|'pending']
      * @return array Result, same shape as CSI_Importer::import_item()
      */
@@ -94,6 +98,21 @@ class CSI_Post_Importer {
             update_post_meta($post_id, '_ce_page_id', $page_id);
             update_post_meta($post_id, '_ce_folder_id', $page['folder_id']);
 
+            // ChurchEdit's `tags` (site-wide, e.g. "Schools", "Safeguarding")
+            // are how news items get categorised on the source site — map
+            // them onto WordPress's built-in category taxonomy so the same
+            // grouping survives the move. Only touch categories when the
+            // source actually has tags for this page; a page with none keeps
+            // whatever WordPress already set (Uncategorized on creation, or
+            // an editor's own categorisation on update) rather than being
+            // forced back to blank.
+            if (!empty($page['tags'])) {
+                $category_ids = self::resolve_category_ids($page['tags']);
+                if (!empty($category_ids)) {
+                    wp_set_post_categories($post_id, $category_ids, false);
+                }
+            }
+
             $pending = CSI_Content_Converter::extract_pending_media($content);
             if (!empty($pending['images'])) {
                 update_post_meta($post_id, '_ce_pending_images', $pending['images']);
@@ -148,6 +167,49 @@ class CSI_Post_Importer {
             }
         }
         return '';
+    }
+
+    /**
+     * Map ChurchEdit tag names onto WordPress `category` term ids, creating
+     * any category that doesn't already exist (matched by name, case-
+     * insensitively — that's how WP itself treats term names). Reused
+     * across pages so re-importing the same tag never creates a duplicate
+     * category.
+     *
+     * @param array $tag_names
+     * @return int[] Term ids; a tag that fails to resolve/create is skipped
+     *               rather than aborting the whole page's import.
+     */
+    private static function resolve_category_ids($tag_names) {
+        $ids = array();
+        foreach ($tag_names as $name) {
+            $name = trim((string) $name);
+            if ($name === '') {
+                continue;
+            }
+
+            $term = get_term_by('name', $name, 'category');
+            if ($term) {
+                $ids[] = (int) $term->term_id;
+                continue;
+            }
+
+            $created = wp_insert_term($name, 'category');
+            if (is_wp_error($created)) {
+                // Most likely 'term_exists' from a race with another page in
+                // this same batch creating it a moment earlier — the error
+                // data carries the winning term_id, so use that instead of
+                // dropping the tag.
+                $existing_id = $created->get_error_data('term_exists');
+                if ($existing_id) {
+                    $ids[] = (int) $existing_id;
+                }
+                continue;
+            }
+
+            $ids[] = (int) $created['term_id'];
+        }
+        return array_values(array_unique($ids));
     }
 
     private static function find_existing_post($ref) {
