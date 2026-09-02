@@ -232,19 +232,29 @@ class CSI_Media_Linker {
      * (`_wp_attached_file`, e.g. "2026/07/photo.jpg") by its basename, trying
      * both the raw ChurchEdit filename and its sanitize_file_name() form
      * (WordPress sanitizes filenames on upload, e.g. spaces become hyphens).
+     *
+     * The LIKE is deliberately broad (just "ends with the candidate"), so
+     * candidates are re-checked for an exact basename match in PHP before
+     * being accepted — otherwise e.g. candidate "2.jpg" would also match a
+     * stored path like "2024/05/img2.jpg" (which also ends in "2.jpg"),
+     * silently linking the wrong image. This was the cause of images
+     * occasionally getting mixed up on import.
      */
     private static function find_attachment_by_filename($filename) {
         global $wpdb;
 
         foreach (array_unique(array($filename, sanitize_file_name($filename))) as $candidate) {
-            $attachment_id = $wpdb->get_var($wpdb->prepare(
-                "SELECT post_id FROM {$wpdb->postmeta}
+            $rows = $wpdb->get_results($wpdb->prepare(
+                "SELECT post_id, meta_value FROM {$wpdb->postmeta}
                  WHERE meta_key = '_wp_attached_file' AND meta_value LIKE %s
-                 ORDER BY post_id DESC LIMIT 1",
+                 ORDER BY post_id DESC",
                 '%' . $wpdb->esc_like($candidate)
             ));
-            if ($attachment_id) {
-                return (int) $attachment_id;
+
+            foreach ($rows as $row) {
+                if (wp_basename($row->meta_value) === $candidate) {
+                    return (int) $row->post_id;
+                }
             }
         }
 

@@ -142,6 +142,15 @@ class CSI_Content_Converter {
     }
 
     /**
+     * Classes that identify structural ChurchEdit components (currently just
+     * its accordion markup) rather than old theme styling — clean_html()
+     * keeps only these out of any @class it finds, so later passes (see
+     * is_accordion_component()) can still recognise the structure once every
+     * other legacy class/style attribute has been stripped.
+     */
+    private static $preserved_classes = array('accordion', 'accordion-row', 'accordion-row-title', 'accordion-row-body');
+
+    /**
      * Strip inline styles/classes/legacy attributes that were tied to
      * ChurchEdit's old theme CSS and won't mean anything in the new theme.
      */
@@ -160,7 +169,18 @@ class CSI_Content_Converter {
             $element->removeAttribute('cellspacing');
             $element->removeAttribute('valign');
             $element->removeAttribute('align');
-            $element->removeAttribute('class');
+
+            if ($element->hasAttribute('class')) {
+                $kept = array_intersect(
+                    preg_split('/\s+/', trim($element->getAttribute('class'))),
+                    self::$preserved_classes
+                );
+                if (!empty($kept)) {
+                    $element->setAttribute('class', implode(' ', $kept));
+                } else {
+                    $element->removeAttribute('class');
+                }
+            }
         }
 
         $cleaned = $dom->saveHTML();
@@ -179,13 +199,179 @@ class CSI_Content_Converter {
         $dom->loadHTML('<?xml encoding="UTF-8">' . $html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
         libxml_clear_errors();
 
-        $blocks = '';
-        foreach ($dom->childNodes as $node) {
-            $blocks .= self::node_to_block($node);
-        }
+        $blocks = self::nodes_to_blocks($dom->childNodes);
 
         $blocks = str_replace(array('encoding="UTF-8"', '<?xml encoding="UTF-8"?>'), '', $blocks);
         return trim($blocks);
+    }
+
+    /**
+     * Convert a list of sibling DOM nodes to block markup, node by node —
+     * except that a run of consecutive ChurchEdit accordion components
+     * (`.accordion` wrappers and/or bare `.accordion-row`s, however they're
+     * nested or interspersed with blank whitespace) is collapsed into a
+     * single wp:accordion block instead of one wp:group per div. ChurchEdit's
+     * export is inconsistent about whether an `.accordion` wraps one row or
+     * several, or whether the wrapper is there at all, so grouping is done
+     * structurally here rather than assumed from a single node shape.
+     */
+    private static function nodes_to_blocks($node_list) {
+        $children = array();
+        foreach ($node_list as $child) {
+            $children[] = $child;
+        }
+
+        $blocks = '';
+        $count  = count($children);
+        $i      = 0;
+
+        while ($i < $count) {
+            $node = $children[$i];
+
+            if ($node instanceof DOMElement && self::is_accordion_component($node)) {
+                $rows = array();
+                while ($i < $count) {
+                    $candidate = $children[$i];
+                    if ($candidate instanceof DOMElement && self::is_accordion_component($candidate)) {
+                        $rows = array_merge($rows, self::extract_accordion_rows($candidate));
+                        $i++;
+                    } elseif (self::is_insignificant_text($candidate)) {
+                        $i++;
+                    } else {
+                        break;
+                    }
+                }
+                $blocks .= self::build_accordion_block($rows);
+                continue;
+            }
+
+            $blocks .= self::node_to_block($node);
+            $i++;
+        }
+
+        return $blocks;
+    }
+
+    /**
+     * Whitespace-only text (including a lone "&nbsp;") between accordion
+     * components — ChurchEdit pads each one with a blank line — that
+     * shouldn't break up a run of rows into separate accordion blocks.
+     */
+    private static function is_insignificant_text($node) {
+        if (!($node instanceof DOMText || $node instanceof DOMComment)) {
+            return false;
+        }
+        return trim(str_replace("\xC2\xA0", ' ', $node->textContent)) === '';
+    }
+
+    private static function is_accordion_component($node) {
+        return self::has_class($node, 'accordion') || self::has_class($node, 'accordion-row');
+    }
+
+    private static function has_class($node, $class) {
+        if (!($node instanceof DOMElement) || !$node->hasAttribute('class')) {
+            return false;
+        }
+        return in_array($class, preg_split('/\s+/', trim($node->getAttribute('class'))), true);
+    }
+
+    /**
+     * A `.accordion-row` is a single row and is returned as-is; a `.accordion`
+     * wrapper is expanded to whichever `.accordion-row`s it contains (one, in
+     * most of ChurchEdit's export, but never assumed).
+     */
+    private static function extract_accordion_rows($node) {
+        if (self::has_class($node, 'accordion-row')) {
+            return array($node);
+        }
+        return self::find_all_by_class($node, 'accordion-row');
+    }
+
+    /**
+     * First descendant (depth-first) carrying $class, or null.
+     */
+    private static function find_first_by_class($node, $class) {
+        foreach ($node->childNodes as $child) {
+            if (!($child instanceof DOMElement)) {
+                continue;
+            }
+            if (self::has_class($child, $class)) {
+                return $child;
+            }
+            $found = self::find_first_by_class($child, $class);
+            if ($found) {
+                return $found;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Every descendant carrying $class — doesn't recurse into a match, since
+     * ChurchEdit never nests one `.accordion-row` inside another.
+     */
+    private static function find_all_by_class($node, $class) {
+        $results = array();
+        foreach ($node->childNodes as $child) {
+            if (!($child instanceof DOMElement)) {
+                continue;
+            }
+            if (self::has_class($child, $class)) {
+                $results[] = $child;
+            } else {
+                $results = array_merge($results, self::find_all_by_class($child, $class));
+            }
+        }
+        return $results;
+    }
+
+    /**
+     * Concatenated outerHTML of $node's children.
+     */
+    private static function inner_html($node) {
+        $html = '';
+        foreach ($node->childNodes as $child) {
+            $html .= $node->ownerDocument->saveHTML($child);
+        }
+        return $html;
+    }
+
+    /**
+     * Build a wp:accordion block (core/accordion + accordion-item/heading/
+     * panel — the real WP core blocks, matching their save() output exactly
+     * so the block editor parses them as valid rather than "needs fixing")
+     * from a flat list of `.accordion-row` elements.
+     */
+    private static function build_accordion_block($rows) {
+        $items = '';
+        foreach ($rows as $row) {
+            $items .= self::build_accordion_item($row);
+        }
+        if (trim($items) === '') {
+            return '';
+        }
+        return "<!-- wp:accordion -->\n<div class=\"wp-block-accordion\" role=\"group\">\n" . $items . "</div>\n<!-- /wp:accordion -->\n\n";
+    }
+
+    private static function build_accordion_item($row) {
+        $title_node = self::find_first_by_class($row, 'accordion-row-title');
+        $title_html = $title_node ? trim(self::inner_html($title_node)) : '';
+
+        $body_node   = self::find_first_by_class($row, 'accordion-row-body');
+        $body_blocks = $body_node ? self::nodes_to_blocks($body_node->childNodes) : '';
+        if (trim($body_blocks) === '') {
+            $body_blocks = "<!-- wp:paragraph -->\n<p></p>\n<!-- /wp:paragraph -->\n\n";
+        }
+
+        $heading = "<!-- wp:accordion-heading -->\n"
+            . "<h3 class=\"wp-block-accordion-heading has-icon has-icon-right\"><button type=\"button\" class=\"wp-block-accordion-heading__toggle\">"
+            . "<span class=\"wp-block-accordion-heading__toggle-title\">" . $title_html . "</span>"
+            . "<span class=\"wp-block-accordion-heading__toggle-icon\" aria-hidden=\"true\">+</span>"
+            . "</button></h3>\n<!-- /wp:accordion-heading -->\n\n";
+
+        $panel = "<!-- wp:accordion-panel -->\n<div class=\"wp-block-accordion-panel\" role=\"region\">\n" . $body_blocks . "</div>\n<!-- /wp:accordion-panel -->\n\n";
+
+        return "<!-- wp:accordion-item -->\n<div class=\"wp-block-accordion-item\">\n" . $heading . $panel . "</div>\n<!-- /wp:accordion-item -->\n\n";
     }
 
     private static function node_to_block($node) {
@@ -203,6 +389,21 @@ class CSI_Content_Converter {
             case 'p':
                 if (trim($node->textContent) === '' && !self::has_embedded_content($node)) {
                     return '';
+                }
+                // ChurchEdit content commonly puts a lone (optionally
+                // linked) image inside a <p> rather than a <figure>. Left as
+                // a wp:paragraph, the image stays raw markup inside a text
+                // block instead of a real, editable image block — so it's
+                // special-cased the same way the single-image <table> below
+                // already is.
+                $sole_image = self::get_sole_image($node);
+                if ($sole_image) {
+                    $figure_content = $sole_image;
+                    if ($sole_image->parentNode instanceof DOMElement && strtolower($sole_image->parentNode->nodeName) === 'a') {
+                        $figure_content = $sole_image->parentNode;
+                    }
+                    $img_html = $node->ownerDocument->saveHTML($figure_content);
+                    return "<!-- wp:image -->\n<figure class=\"wp-block-image\">" . $img_html . "</figure>\n<!-- /wp:image -->\n\n";
                 }
                 return "<!-- wp:paragraph -->\n" . $html . "\n<!-- /wp:paragraph -->\n\n";
 
@@ -234,11 +435,7 @@ class CSI_Content_Converter {
                     }
                 }
                 if ($has_block_children) {
-                    $content = '';
-                    foreach ($node->childNodes as $child) {
-                        $content .= self::node_to_block($child);
-                    }
-                    return $content;
+                    return self::nodes_to_blocks($node->childNodes);
                 }
                 return "<!-- wp:quote -->\n" . $html . "\n<!-- /wp:quote -->\n\n";
 
@@ -267,21 +464,14 @@ class CSI_Content_Converter {
             case 'div':
             case 'section':
             case 'article':
-                $content = '';
-                foreach ($node->childNodes as $child) {
-                    $content .= self::node_to_block($child);
-                }
+                $content = self::nodes_to_blocks($node->childNodes);
                 if (trim($content) !== '') {
                     return "<!-- wp:group -->\n<div class=\"wp-block-group\">" . $content . "</div>\n<!-- /wp:group -->\n\n";
                 }
                 return '';
 
             default:
-                $content = '';
-                foreach ($node->childNodes as $child) {
-                    $content .= self::node_to_block($child);
-                }
-                return $content;
+                return self::nodes_to_blocks($node->childNodes);
         }
     }
 
@@ -296,6 +486,21 @@ class CSI_Content_Converter {
             }
         }
         return false;
+    }
+
+    /**
+     * The node's single <img>, if it has no other text — same "one image,
+     * nothing else" test already used for the <table> case below.
+     */
+    private static function get_sole_image($node) {
+        if (trim($node->textContent) !== '') {
+            return null;
+        }
+        $imgs = $node->getElementsByTagName('img');
+        if ($imgs->length !== 1) {
+            return null;
+        }
+        return $imgs->item(0);
     }
 
     /**
