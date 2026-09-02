@@ -96,7 +96,7 @@ class CSI_Admin_UI {
 
                     <h2><?php esc_html_e('4. Import Folder as Posts', 'churchedit-sql-importer'); ?></h2>
                     <p class="description">
-                        <?php esc_html_e('For flat/blog-style folders (like "news") excluded from the Pages tree above — imports every page in the chosen folder as a flat WP Post, no hierarchy. Uses the SQL file parsed in step 1.', 'churchedit-sql-importer'); ?>
+                        <?php esc_html_e('For flat/blog-style folders (like "news", or a parish\'s own blog) — imports every page in the chosen folder as a flat WP Post, no hierarchy. Any folder can be picked here, not just the large ones excluded from the Pages tree above — if you use this for a folder that\'s also checked in the Pages tree, uncheck it there first so it isn\'t imported twice. Uses the SQL file parsed in step 1.', 'churchedit-sql-importer'); ?>
                     </p>
                     <table class="form-table">
                         <tr>

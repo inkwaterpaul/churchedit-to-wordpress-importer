@@ -926,16 +926,35 @@ class CSI_AJAX_Handler {
                 'card_review'      => count(array_filter($resolved['pages'], function ($p) { return $p['card_review']; })),
             );
 
-            $large_folders = array();
+            // Every folder that could sensibly be flattened into WP Posts —
+            // not just the ones already excluded from the Pages tree for
+            // being oversized. ChurchEdit folders that are conceptually a
+            // blog (e.g. a parish's own news page) but happen to hold a
+            // normal, sub-100 number of pages still show up fine in the
+            // Pages tree, but importing them there gives every entry a
+            // hierarchical Page with no post_date/categories — this list
+            // lets any folder be chosen here instead. Feature/xdb modules
+            // and vacancy-listing folders are left out: they need (and
+            // already have) their own dedicated handling.
+            $post_folders = array();
             foreach ($resolved['folders'] as $fid => $f) {
-                if (!empty($f['large_folder'])) {
-                    $large_folders[] = array(
-                        'folder_id'  => $fid,
-                        'title'      => $f['folder_name'] ? $f['folder_name'] : $f['folder_full_name'],
-                        'page_count' => count($f['page_ids']),
-                    );
+                if (empty($f['page_ids'])) {
+                    continue;
                 }
+                if ($f['excluded'] && empty($f['large_folder'])) {
+                    continue;
+                }
+                if (in_array($fid, $resolved['vacancy_root_folder_ids'], true)) {
+                    continue;
+                }
+                $post_folders[] = array(
+                    'folder_id'    => $fid,
+                    'title'        => CSI_Hierarchy_Resolver::folder_display_path($resolved, $fid),
+                    'page_count'   => count($f['page_ids']),
+                    'large_folder' => !empty($f['large_folder']),
+                );
             }
+            usort($post_folders, function ($a, $b) { return strcasecmp($a['title'], $b['title']); });
 
             $vacancy_folders = array();
             foreach ($resolved['vacancy_root_folder_ids'] as $fid) {
@@ -953,7 +972,7 @@ class CSI_AJAX_Handler {
                 'cache_key'       => $cache_key,
                 'summary'         => $summary,
                 'tree'            => $tree,
-                'large_folders'   => $large_folders,
+                'post_folders'    => $post_folders,
                 'vacancy_folders' => $vacancy_folders,
             ));
         } catch (Exception $e) {

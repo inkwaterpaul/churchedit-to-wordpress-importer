@@ -104,12 +104,14 @@
             $('#csi-tree-wrap').show();
 
             var $postsFolder = $('#csi-posts-folder').empty();
-            if (resp.data.large_folders.length) {
-                resp.data.large_folders.forEach(function (f) {
-                    $postsFolder.append($('<option>').val(f.folder_id).text(f.title + ' (' + f.page_count + ' pages)'));
+            if (resp.data.post_folders.length) {
+                $postsFolder.append($('<option>').val('').text('Choose a folder…'));
+                resp.data.post_folders.forEach(function (f) {
+                    var label = f.title + ' (' + f.page_count + ' pages)' + (f.large_folder ? ' — large' : '');
+                    $postsFolder.append($('<option>').val(f.folder_id).text(label));
                 });
             } else {
-                $postsFolder.append($('<option>').val('').text('No large folders found'));
+                $postsFolder.append($('<option>').val('').text('No folders found'));
             }
 
             var $vacanciesFolder = $('#csi-vacancies-folder').empty();

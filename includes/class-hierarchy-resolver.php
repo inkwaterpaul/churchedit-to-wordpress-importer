@@ -152,6 +152,13 @@ class CSI_Hierarchy_Resolver {
         //      contains senior-clergy-staff.php — without this, that page
         //      imports twice: once as an empty stub, once as its own
         //      identically-titled child);
+        //   2b. failing that, a page inside it whose *title* matches the
+        //      folder's display name — the same convention, just not caught
+        //      by the filename check because the filename and title happen
+        //      to diverge (confirmed against real data, e.g. folder
+        //      "Diocesan Synod" containing a page titled "Diocesan Synod"
+        //      but filed as something else — same duplicate-stub problem,
+        //      just visible as an identically-*titled* child instead);
         //   3. for a "-noshow" folder specifically — which by definition
         //      isn't meant to be a distinct visible level at all — become
         //      transparent, borrowing its parent's node so its children
@@ -176,6 +183,9 @@ class CSI_Hierarchy_Resolver {
             }
 
             $implicit_id = self::find_index_named_page($folders_by_id, $pages_by_id, $id, $folders_by_id[$id]['folder_full_name']);
+            if ($implicit_id === null) {
+                $implicit_id = self::find_title_matching_page($folders_by_id, $pages_by_id, $id);
+            }
             if ($implicit_id !== null) {
                 $folders_by_id[$id]['node_ref'] = 'page:' . $implicit_id;
                 $pages_by_id[$implicit_id]['is_folder_node'] = true;
@@ -332,8 +342,13 @@ class CSI_Hierarchy_Resolver {
                 // "exploring-your-vocation" containing
                 // "exploring-your-vocation.php"), which ChurchEdit still
                 // serves at the folder's own URL even though main_page was
-                // never set. Fall back to that convention if present.
+                // never set. Fall back to that convention if present, then to
+                // a page whose title (rather than filename) matches instead —
+                // see the "2b" case in build()'s node_ref resolution.
                 $main_page_id = self::find_index_named_page($resolved['folders'], $resolved['pages'], $fid, $f['folder_full_name']);
+                if ($main_page_id === null) {
+                    $main_page_id = self::find_title_matching_page($resolved['folders'], $resolved['pages'], $fid);
+                }
             }
             if ($main_page_id === null) {
                 continue;
@@ -373,6 +388,35 @@ class CSI_Hierarchy_Resolver {
     }
 
     /**
+     * Find a page directly inside $folder_id whose *title* matches the
+     * folder's own display name — a fallback for find_index_named_page()
+     * when the filename convention doesn't hold but the title still gives
+     * away that this page is really the folder's own landing page (see the
+     * "2b" note above build()'s node_ref resolution).
+     */
+    private static function find_title_matching_page($folders_by_id, $pages_by_id, $folder_id) {
+        if (!isset($folders_by_id[$folder_id])) {
+            return null;
+        }
+        $folder = $folders_by_id[$folder_id];
+        $folder_title = $folder['folder_name'] ? $folder['folder_name'] : $folder['folder_full_name'];
+        $folder_title = trim(mb_strtolower((string) $folder_title));
+        if ($folder_title === '') {
+            return null;
+        }
+        foreach ($folder['page_ids'] as $pid) {
+            if (!isset($pages_by_id[$pid])) {
+                continue;
+            }
+            $page_title = trim(mb_strtolower((string) $pages_by_id[$pid]['page_title']));
+            if ($page_title !== '' && $page_title === $folder_title) {
+                return (string) $pid;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Ordered list of folder_full_name segments from root down to $folder_id.
      * When $flatten_noshow is true, any folder whose name contains "-noshow"
      * is omitted from the path (matching ChurchEdit's live URL behavior).
@@ -392,6 +436,27 @@ class CSI_Hierarchy_Resolver {
             $folder_id = self::norm_id($f['parent_id']);
         }
         return array_reverse($segments);
+    }
+
+    /**
+     * Human-readable "Parent > Child > ..." breadcrumb for a folder, built
+     * from the same display name used elsewhere (folder_name, falling back
+     * to folder_full_name). Used to disambiguate flat folder pickers — e.g.
+     * "Import Folder as Posts" — where every folder in the site is listed
+     * rather than just the handful whose page count happens to be over the
+     * large-folder threshold, so same-named folders in different sections
+     * (several parish "News" or "Blog" folders, say) are still tellable apart.
+     */
+    public static function folder_display_path($resolved, $folder_id) {
+        $segments = array();
+        $seen = array();
+        while ($folder_id !== null && isset($resolved['folders'][$folder_id]) && !isset($seen[$folder_id])) {
+            $seen[$folder_id] = true;
+            $f = $resolved['folders'][$folder_id];
+            $segments[] = $f['folder_name'] ? $f['folder_name'] : $f['folder_full_name'];
+            $folder_id = self::norm_id($f['parent_id']);
+        }
+        return implode(' > ', array_reverse($segments));
     }
 
     /**
