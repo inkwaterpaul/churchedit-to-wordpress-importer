@@ -107,7 +107,6 @@ class CSI_Media_Linker {
         if (!empty($pending_images) && is_array($pending_images)) {
             $still_pending      = array();
             $first_image_id     = null;
-            $first_image_new_url = null;
             $already_has_thumb  = has_post_thumbnail($page_id);
 
             foreach ($pending_images as $item) {
@@ -125,8 +124,7 @@ class CSI_Media_Linker {
                     $changed = true;
                     $results['images_updated']++;
                     if ($first_image_id === null && !$already_has_thumb) {
-                        $first_image_id      = $attach_id;
-                        $first_image_new_url = $new_url;
+                        $first_image_id = $attach_id;
                     }
                 } else {
                     $still_pending[] = $item;
@@ -146,9 +144,6 @@ class CSI_Media_Linker {
 
             if ($first_image_id) {
                 set_post_thumbnail($page_id, $first_image_id);
-                // It's now the featured image, so drop its own image block from
-                // the body rather than showing it twice.
-                $content = self::strip_image_block($content, $first_image_new_url);
             }
         }
 
@@ -211,18 +206,6 @@ class CSI_Media_Linker {
         }
 
         return $deduped;
-    }
-
-    /**
-     * Remove the <!-- wp:image -->...<!-- /wp:image --> block containing the
-     * given (already-rewritten) attachment URL — used once that image has
-     * been set as the featured image, so it isn't also shown in the body.
-     * CSI_Content_Converter always emits bare `<!-- wp:image -->` (no JSON
-     * attrs) for every image-producing case, so this pattern is exhaustive.
-     */
-    private static function strip_image_block($content, $url) {
-        $pattern = '/<!-- wp:image -->.*?src="' . preg_quote($url, '/') . '".*?<!-- \/wp:image -->\n*/s';
-        return preg_replace($pattern, '', $content, 1);
     }
 
     /**
