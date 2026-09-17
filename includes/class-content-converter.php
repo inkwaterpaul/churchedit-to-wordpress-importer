@@ -245,11 +245,69 @@ class CSI_Content_Converter {
                 continue;
             }
 
+            // ChurchEdit's export sometimes drops running text (and inline
+            // markup like a link) straight into a container — most visibly
+            // inside an accordion panel — without a wrapping <p>, e.g.
+            // "<div ...>Some text <a href=...>a link</a> more text</div>".
+            // Left as-is, that text would be emitted raw, outside any block
+            // comment, which isn't valid block markup. A run of one or more
+            // consecutive text/inline-element siblings is collected and
+            // wrapped in a single wp:paragraph instead of processed node by
+            // node — the same way the browser would treat them as one line
+            // of text.
+            if ($node instanceof DOMText || self::is_inline_element($node)) {
+                $run = '';
+                while ($i < $count) {
+                    $candidate = $children[$i];
+                    if ($candidate instanceof DOMText || self::is_inline_element($candidate)) {
+                        $run .= $candidate->ownerDocument->saveHTML($candidate);
+                        $i++;
+                    } else {
+                        break;
+                    }
+                }
+                if (trim(str_replace("\xC2\xA0", ' ', strip_tags($run))) !== '') {
+                    $blocks .= "<!-- wp:paragraph -->\n<p>" . trim($run) . "</p>\n<!-- /wp:paragraph -->\n\n";
+                }
+                continue;
+            }
+
             $blocks .= self::node_to_block($node);
             $i++;
         }
 
         return $blocks;
+    }
+
+    /**
+     * Phrasing-content tags ChurchEdit's export can leave as a direct child
+     * of a container instead of inside a <p> — text-level markup, never
+     * something that should start a block of its own.
+     */
+    private static $inline_tags = array(
+        'a', 'strong', 'b', 'em', 'i', 'span', 'u', 'sup', 'sub', 'small',
+        'mark', 'abbr', 'cite', 'q', 'br', 'kbd', 's', 'strike', 'del', 'ins',
+        'font', 'label',
+    );
+
+    private static function is_inline_element($node) {
+        return $node instanceof DOMElement && in_array(strtolower($node->tagName), self::$inline_tags, true);
+    }
+
+    /**
+     * ChurchEdit's WYSIWYG editor commonly leaves a trailing <br> inside a
+     * <li> (a leftover line break before the closing tag, padded with a
+     * &nbsp;) — harmless in the old theme's rendering, but redundant markup
+     * inside a WP list item. Strips every <br> found anywhere in the list.
+     */
+    private static function strip_br_tags($node) {
+        $brs = array();
+        foreach ($node->getElementsByTagName('br') as $br) {
+            $brs[] = $br;
+        }
+        foreach ($brs as $br) {
+            $br->parentNode->removeChild($br);
+        }
     }
 
     /**
@@ -390,20 +448,21 @@ class CSI_Content_Converter {
                 if (trim($node->textContent) === '' && !self::has_embedded_content($node)) {
                     return '';
                 }
-                // ChurchEdit content commonly puts a lone (optionally
-                // linked) image inside a <p> rather than a <figure>. Left as
-                // a wp:paragraph, the image stays raw markup inside a text
-                // block instead of a real, editable image block — so it's
-                // special-cased the same way the single-image <table> below
-                // already is.
-                $sole_image = self::get_sole_image($node);
-                if ($sole_image) {
-                    $figure_content = $sole_image;
-                    if ($sole_image->parentNode instanceof DOMElement && strtolower($sole_image->parentNode->nodeName) === 'a') {
-                        $figure_content = $sole_image->parentNode;
+                // ChurchEdit content commonly puts one or more (optionally
+                // linked) images inside a <p> rather than a <figure> — often
+                // padded with a stray &nbsp; — instead of using a real
+                // <figure>. Left as a wp:paragraph, the image(s) stay raw
+                // markup inside a text block instead of real, editable image
+                // blocks — so it's special-cased the same way the
+                // single-image <table> below already is.
+                $image_figures = self::get_image_only_figures($node);
+                if ($image_figures) {
+                    $image_blocks = '';
+                    foreach ($image_figures as $figure_content) {
+                        $img_html = $node->ownerDocument->saveHTML($figure_content);
+                        $image_blocks .= "<!-- wp:image -->\n<figure class=\"wp-block-image\">" . $img_html . "</figure>\n<!-- /wp:image -->\n\n";
                     }
-                    $img_html = $node->ownerDocument->saveHTML($figure_content);
-                    return "<!-- wp:image -->\n<figure class=\"wp-block-image\">" . $img_html . "</figure>\n<!-- /wp:image -->\n\n";
+                    return $image_blocks;
                 }
                 return "<!-- wp:paragraph -->\n" . $html . "\n<!-- /wp:paragraph -->\n\n";
 
@@ -420,10 +479,12 @@ class CSI_Content_Converter {
                 return "<!-- wp:image -->\n<figure class=\"wp-block-image\">" . $html . "</figure>\n<!-- /wp:image -->\n\n";
 
             case 'ul':
-                return "<!-- wp:list -->\n" . $html . "\n<!-- /wp:list -->\n\n";
+                self::strip_br_tags($node);
+                return "<!-- wp:list -->\n" . $node->ownerDocument->saveHTML($node) . "\n<!-- /wp:list -->\n\n";
 
             case 'ol':
-                return "<!-- wp:list {\"ordered\":true} -->\n" . $html . "\n<!-- /wp:list -->\n\n";
+                self::strip_br_tags($node);
+                return "<!-- wp:list {\"ordered\":true} -->\n" . $node->ownerDocument->saveHTML($node) . "\n<!-- /wp:list -->\n\n";
 
             case 'blockquote':
                 $has_block_children = false;
@@ -489,18 +550,40 @@ class CSI_Content_Converter {
     }
 
     /**
-     * The node's single <img>, if it has no other text — same "one image,
-     * nothing else" test already used for the <table> case below.
+     * The node's <img> elements (each wrapped in its parent <a> when it's
+     * linked), if the node has no other text — same "images, nothing else"
+     * test already used for the <table> case below. A &nbsp; used to pad
+     * the image (very common in ChurchEdit's export) doesn't count as text:
+     * trim() alone doesn't strip it, since it's U+00A0 not a plain space.
      */
-    private static function get_sole_image($node) {
-        if (trim($node->textContent) !== '') {
+    private static function get_image_only_figures($node) {
+        $text = trim(str_replace("\xC2\xA0", ' ', $node->textContent));
+        if ($text !== '') {
             return null;
         }
         $imgs = $node->getElementsByTagName('img');
-        if ($imgs->length !== 1) {
+        if ($imgs->length < 1) {
             return null;
         }
-        return $imgs->item(0);
+
+        $figures = array();
+        $seen    = array();
+        foreach ($imgs as $img) {
+            $figure_content = $img;
+            if ($img->parentNode instanceof DOMElement && strtolower($img->parentNode->nodeName) === 'a') {
+                $figure_content = $img->parentNode;
+            }
+            // A linked image's wrapping <a> is the figure content instead of
+            // the <img> itself — skip it if already added, in case that same
+            // <a> wraps more than one of this paragraph's images.
+            $key = spl_object_id($figure_content);
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key]  = true;
+            $figures[] = $figure_content;
+        }
+        return $figures;
     }
 
     /**
