@@ -6,7 +6,7 @@
  * the page_options JSON (see the hierarchy resolver's card_auto/card_review
  * flags — confirmed unreliable during migration planning). The actual,
  * reliable signal is structural: a `<div class="flexContainer">` wrapping one
- * or more `<blockquote class="landing ...">` cards, each linking to another
+ * or more `<blockquote>` cards (usually class="landing …"), each linking to another
  * page. This class finds those, strips them out of the raw HTML (they're
  * replaced with a placeholder comment further down the pipeline — see
  * CSI_Importer::import_page()), and classifies each card's link as either an
@@ -59,10 +59,13 @@ class CSI_Page_Links_Extractor {
 
         foreach ($containers as $container) {
             $cards = self::extract_cards($container, $xpath, $url_index);
+            // A grid with no usable cards is left in place for normal block
+            // conversion rather than removed — removing it silently dropped
+            // its content from the page.
             if (!empty($cards['page_refs']) || !empty($cards['external_links'])) {
                 $groups[] = $cards;
+                $to_remove[] = $container;
             }
-            $to_remove[] = $container;
         }
 
         foreach ($to_remove as $node) {
@@ -92,7 +95,9 @@ class CSI_Page_Links_Extractor {
         $page_refs      = array();
         $external_links = array();
 
-        $blockquotes = $xpath->query('.//blockquote[contains(concat(" ", normalize-space(@class), " "), " landing ")]', $container);
+        // Cards are usually `<blockquote class="landing …">`, but some grids
+        // (e.g. Salisbury's Safeguarding page) use bare `<blockquote>`s.
+        $blockquotes = $xpath->query('.//blockquote[not(ancestor::blockquote)]', $container);
 
         foreach ($blockquotes as $bq) {
             $title = '';

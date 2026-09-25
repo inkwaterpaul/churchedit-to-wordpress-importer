@@ -29,6 +29,7 @@
 .csi-diff-list { max-height: 400px; overflow-y: auto; border: 1px solid #dcdcde; background: #fafafa; padding: 10px; margin-bottom: 10px; }
 .csi-diff-item { padding: 4px 0; border-bottom: 1px solid #f0f0f1; }
 .csi-diff-item:last-child { border-bottom: none; }
+.csi-diff-breadcrumb { font-size: 11px; color: #646970; margin: 0 0 1px 24px; }
 .csi-diff-fields { color: #646970; font-size: 12px; }
 .csi-diff-view-toggle { margin-left: 8px; font-size: 12px; }
 .csi-diff-list { position: relative; }
@@ -39,4 +40,23 @@
 .csi-diff-detail .diff { width: 100%; }
 .csi-diff-field { margin-bottom: 10px; }
 .csi-diff-removed { font-size: 12px; color: #646970; }
+.csi-diff-as-label { margin-left: 8px; font-size: 12px; }
+.csi-diff-as { font-size: 12px; min-height: 24px; line-height: 1.5; padding: 0 20px 0 6px; }
 .csi-diff-new { color: #2271b1; font-weight: 600; }
+.csi-todo-post { margin: 0 0 6px; }
+.csi-todo-summary { font-weight: 600; margin: 4px 0 8px; }
+.csi-todo { margin: 0 0 10px 20px; }
+.csi-todo-item { margin-bottom: 10px; padding: 6px 8px; border-left: 4px solid #dcdcde; background: #fafafa; }
+.csi-todo-todo { border-left-color: #dba617; }
+.csi-todo-check { border-left-color: #d63638; }
+.csi-todo-done { border-left-color: #00a32a; opacity: .7; }
+.csi-todo-status { display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: #646970; margin-right: 4px; }
+.csi-todo-was, .csi-todo-now, .csi-todo-after { margin-top: 3px; }
+.csi-todo-was .csi-todo-text { text-decoration: line-through; color: #8c1d18; }
+.csi-todo-after { font-size: 12px; color: #646970; }
+.csi-todo-lines { margin: 2px 0 0 16px; list-style: circle; }
+.csi-todo-links { margin: 2px 0 0 16px; list-style: disc; font-size: 12px; }
+.csi-todo-links code { font-size: 11px; word-break: break-all; }
+.csi-todo-missing { color: #d63638; font-weight: 600; }
+.csi-todo-raw { margin-top: 10px; }
+.csi-diff-fetch-files-btn { margin-bottom: 6px; }

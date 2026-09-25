@@ -25,6 +25,7 @@ class CSI_AJAX_Handler {
         add_action('wp_ajax_csi_compare_pages', array(__CLASS__, 'handle_compare_pages'));
         add_action('wp_ajax_csi_compare_calendar', array(__CLASS__, 'handle_compare_calendar'));
         add_action('wp_ajax_csi_diff_view_item', array(__CLASS__, 'handle_diff_view_item'));
+        add_action('wp_ajax_csi_fetch_item_files', array(__CLASS__, 'handle_fetch_item_files'));
     }
 
     /**
@@ -115,24 +116,43 @@ class CSI_AJAX_Handler {
 
             $bucketed_ids = $pages_tree_ids + $posts_ids + $vacancies_ids;
 
-            $buckets = array(
-                'pages'     => self::bucket_page_diff($diff, $pages_tree_ids, $resolved['pages'], $old_pages, 'page'),
-                'posts'     => self::bucket_page_diff($diff, $posts_ids, $resolved['pages'], $old_pages, 'post'),
-                'vacancies' => self::bucket_page_diff($diff, $vacancies_ids, $resolved['pages'], $old_pages, 'vacancy'),
-            );
+            // What each source page already is in WordPress (page/post/
+            // vacancy), if anything — an existing item is always updated as
+            // that type; only items not in WordPress yet get an "Add as"
+            // choice in the UI.
+            global $wpdb;
+            $in_wp = array();
+            foreach ($wpdb->get_results(
+                "SELECT m.meta_value AS page_id, p.post_type FROM {$wpdb->postmeta} m
+                 JOIN {$wpdb->posts} p ON p.ID = m.post_id
+                 WHERE m.meta_key = '_ce_page_id' AND p.post_status <> 'trash'
+                   AND p.post_type IN ('page', 'post', 'vacancy')"
+            ) as $row) {
+                $in_wp[(string) $row->page_id] = $row->post_type;
+            }
 
-            $other_changed = 0;
-            foreach ($diff['changed'] as $id => $info) {
+            // Everything that changed or was added but falls outside the
+            // Pages tree and the selected Posts/Vacancies folders — e.g. a
+            // new item in an excluded "news" folder when no Posts folder is
+            // selected. Listed rather than silently left out.
+            $other_ids = array();
+            foreach (array_merge(array_keys($diff['changed']), $diff['added']) as $id) {
                 if (!isset($bucketed_ids[$id])) {
-                    $other_changed++;
+                    $other_ids[$id] = true;
                 }
             }
+
+            $buckets = array(
+                'pages'     => self::bucket_page_diff($diff, $pages_tree_ids, $resolved, $old_pages, 'page', $in_wp),
+                'posts'     => self::bucket_page_diff($diff, $posts_ids, $resolved, $old_pages, 'post', $in_wp),
+                'vacancies' => self::bucket_page_diff($diff, $vacancies_ids, $resolved, $old_pages, 'vacancy', $in_wp),
+                'other'     => self::bucket_page_diff($diff, $other_ids, $resolved, $old_pages, 'page', $in_wp),
+            );
 
             ob_end_clean();
             wp_send_json_success(array(
                 'old_pages_cache_key' => $old_cache_key,
                 'buckets'             => $buckets,
-                'other_changed'       => $other_changed,
             ));
         } catch (Exception $e) {
             ob_end_clean();
@@ -175,7 +195,8 @@ class CSI_AJAX_Handler {
      * fields (title/ref for removed items comes from the OLD row, since
      * there's no NEW row to read it from).
      */
-    private static function bucket_page_diff($diff, $id_set, $new_pages, $old_pages, $ref_prefix) {
+    private static function bucket_page_diff($diff, $id_set, $resolved, $old_pages, $ref_prefix, $in_wp) {
+        $new_pages = $resolved['pages'];
         $changed = array();
         foreach ($diff['changed'] as $id => $info) {
             if (!isset($id_set[$id])) {
@@ -185,6 +206,9 @@ class CSI_AJAX_Handler {
                 'ref'    => $ref_prefix . ':' . $id,
                 'id'     => $id,
                 'title'  => $new_pages[$id]['page_title'],
+                'breadcrumb' => self::breadcrumb($resolved, $id),
+                'in_wp'  => isset($in_wp[(string) $id]),
+                'wp_type' => isset($in_wp[(string) $id]) ? $in_wp[(string) $id] : null,
                 'fields' => $info['fields'],
             );
         }
@@ -192,7 +216,7 @@ class CSI_AJAX_Handler {
         $added = array();
         foreach ($diff['added'] as $id) {
             if (isset($id_set[$id])) {
-                $added[] = array('ref' => $ref_prefix . ':' . $id, 'id' => $id, 'title' => $new_pages[$id]['page_title']);
+                $added[] = array('ref' => $ref_prefix . ':' . $id, 'id' => $id, 'title' => $new_pages[$id]['page_title'], 'breadcrumb' => self::breadcrumb($resolved, $id), 'in_wp' => isset($in_wp[(string) $id]), 'wp_type' => isset($in_wp[(string) $id]) ? $in_wp[(string) $id] : null);
             }
         }
 
@@ -216,6 +240,44 @@ class CSI_AJAX_Handler {
             'removed'         => $removed,
             'unchanged_count' => $unchanged_count,
         );
+    }
+
+    /**
+     * Where a page sits in the ChurchEdit folder tree, as a list of parent
+     * titles from the top down — shown above each Compare & Update item,
+     * since plenty of pages share near-identical titles ("Safeguarding",
+     * "Resources"…). Each folder is named the way the importer titles it in
+     * WordPress: by its main page's title, else its folder name.
+     */
+    private static function breadcrumb($resolved, $page_id) {
+        $folders = $resolved['folders'];
+        $page    = $resolved['pages'][$page_id];
+        $folder_id = isset($page['folder_id']) ? (string) $page['folder_id'] : '';
+
+        // A folder's own main page *is* that folder level — start above it.
+        if (!empty($page['is_folder_node']) && isset($folders[$folder_id]) && $folders[$folder_id]['node_ref'] === 'page:' . $page_id) {
+            $folder_id = (string) $folders[$folder_id]['parent_id'];
+        }
+
+        $crumbs = array();
+        $seen   = array();
+        while ($folder_id !== '' && $folder_id !== '0' && isset($folders[$folder_id]) && !isset($seen[$folder_id])) {
+            $seen[$folder_id] = true;
+            $folder = $folders[$folder_id];
+            $node   = isset($folder['node_ref']) ? (string) $folder['node_ref'] : '';
+            if (strpos($node, 'page:') === 0 && isset($resolved['pages'][substr($node, 5)])) {
+                $name = $resolved['pages'][substr($node, 5)]['page_title'];
+            } else {
+                $name = ucwords(str_replace(array('-', '_'), ' ', $folder['folder_name'] ? $folder['folder_name'] : $folder['folder_full_name']));
+            }
+            $name = preg_replace('/^[\s\p{Z}]+|[\s\p{Z}]+$/u', '', wp_strip_all_tags($name));
+            // A "-noshow" folder shares its parent's node, so it'd repeat it.
+            if ($name !== '' && (empty($crumbs) || $crumbs[0] !== $name)) {
+                array_unshift($crumbs, $name);
+            }
+            $folder_id = (string) $folder['parent_id'];
+        }
+        return $crumbs;
     }
 
     /**
@@ -309,50 +371,147 @@ class CSI_AJAX_Handler {
                 wp_send_json_error(array('message' => __('Permission denied.', 'churchedit-sql-importer')));
             }
 
-            $kind = isset($_POST['kind']) ? sanitize_key($_POST['kind']) : '';
-            $id   = isset($_POST['id']) ? sanitize_text_field($_POST['id']) : '';
-            $old_cache_key = isset($_POST['old_cache_key']) ? sanitize_text_field($_POST['old_cache_key']) : '';
-            $cache_key     = isset($_POST['cache_key']) ? sanitize_text_field($_POST['cache_key']) : '';
-
-            $old_map = CSI_Cache::load($old_cache_key);
-            if (!$old_map || !isset($old_map[$id])) {
-                ob_end_clean();
-                wp_send_json_error(array('message' => __('Old item data not found — please re-run Compare.', 'churchedit-sql-importer')));
-            }
-
-            if ($kind === 'event') {
-                $new_data = CSI_Cache::load($cache_key);
-                if (!$new_data) {
-                    ob_end_clean();
-                    wp_send_json_error(array('message' => __('New calendar data not found — please re-run Compare.', 'churchedit-sql-importer')));
-                }
-                $new_map = CSI_Diff_Engine::key_by($new_data['events'], 'event_id');
-                $fields  = CSI_Diff_Engine::EVENT_FIELDS;
-            } else {
-                $resolved = CSI_Cache::load($cache_key);
-                if (!$resolved) {
-                    ob_end_clean();
-                    wp_send_json_error(array('message' => __('New pages data not found — please re-run Compare.', 'churchedit-sql-importer')));
-                }
-                $new_map = $resolved['pages'];
-                $fields  = CSI_Diff_Engine::PAGE_FIELDS;
-            }
-
-            if (!isset($new_map[$id])) {
-                ob_end_clean();
-                wp_send_json_error(array('message' => __('New item data not found.', 'churchedit-sql-importer')));
-            }
-
-            $rows = CSI_Diff_Engine::render_item_diff($old_map[$id], $new_map[$id], $fields);
+            $item = self::load_diff_item();
+            $rows = CSI_Diff_Engine::render_item_diff($item['old'], $item['new'], $item['fields']);
 
             ob_end_clean();
-            wp_send_json_success(array('rows' => $rows));
+            wp_send_json_success(array(
+                'rows' => $rows,
+                'todo' => CSI_Change_List::build($item['old'][$item['content_field']], $item['new'][$item['content_field']], $item['post_id']),
+                'post' => self::post_links($item['post_id']),
+            ));
         } catch (Exception $e) {
             ob_end_clean();
             wp_send_json_error(array('message' => 'Exception: ' . $e->getMessage()));
         } catch (Error $e) {
             ob_end_clean();
             wp_send_json_error(array('message' => 'Fatal error: ' . $e->getMessage()));
+        }
+    }
+
+    /**
+     * Download the documents/images one changed item's new content links to
+     * that aren't in the Media Library yet, then point any links on its
+     * WordPress post that still go to ChurchEdit-hosted files at the Media
+     * Library copies. Returns the refreshed to-do list.
+     */
+    public static function handle_fetch_item_files() {
+        ob_start();
+        try {
+            check_ajax_referer('csi_nonce', 'nonce');
+            if (!current_user_can('manage_options') || !current_user_can('upload_files')) {
+                ob_end_clean();
+                wp_send_json_error(array('message' => __('Permission denied.', 'churchedit-sql-importer')));
+            }
+
+            self::save_source_site_url();
+            $item = self::load_diff_item();
+
+            @set_time_limit(300);
+
+            $old_html = $item['old'][$item['content_field']];
+            $new_html = $item['new'][$item['content_field']];
+            $files = array();
+            foreach (CSI_Change_List::files_in(CSI_Change_List::build($old_html, $new_html, $item['post_id'])) as $link) {
+                $files[] = CSI_Media_Linker::import_file($link['href']);
+            }
+
+            $relinked = $item['post_id'] ? CSI_Media_Linker::relink_post($item['post_id']) : 0;
+
+            ob_end_clean();
+            wp_send_json_success(array(
+                'files'    => $files,
+                'relinked' => $relinked,
+                'todo'     => CSI_Change_List::build($old_html, $new_html, $item['post_id']),
+                'post'     => self::post_links($item['post_id']),
+            ));
+        } catch (Exception $e) {
+            ob_end_clean();
+            wp_send_json_error(array('message' => 'Exception: ' . $e->getMessage()));
+        } catch (Error $e) {
+            ob_end_clean();
+            wp_send_json_error(array('message' => 'Fatal error: ' . $e->getMessage()));
+        }
+    }
+
+    /**
+     * The old and new source rows for one Compare & Update item (from the
+     * caches the Compare step and step 1/5 wrote), plus the WordPress post it
+     * was imported to. Sends a JSON error and exits if anything's missing.
+     */
+    private static function load_diff_item() {
+        $kind = isset($_POST['kind']) ? sanitize_key($_POST['kind']) : '';
+        $id   = isset($_POST['id']) ? sanitize_text_field($_POST['id']) : '';
+        $old_cache_key = isset($_POST['old_cache_key']) ? sanitize_text_field($_POST['old_cache_key']) : '';
+        $cache_key     = isset($_POST['cache_key']) ? sanitize_text_field($_POST['cache_key']) : '';
+
+        $old_map = CSI_Cache::load($old_cache_key);
+        if (!$old_map || !isset($old_map[$id])) {
+            ob_end_clean();
+            wp_send_json_error(array('message' => __('Old item data not found — please re-run Compare.', 'churchedit-sql-importer')));
+        }
+
+        if ($kind === 'event') {
+            $new_data = CSI_Cache::load($cache_key);
+            if (!$new_data) {
+                ob_end_clean();
+                wp_send_json_error(array('message' => __('New calendar data not found — please re-run Compare.', 'churchedit-sql-importer')));
+            }
+            $new_map = CSI_Diff_Engine::key_by($new_data['events'], 'event_id');
+            $fields  = CSI_Diff_Engine::EVENT_FIELDS;
+            $content_field = 'long_event';
+            $meta_key   = '_ce_event_id';
+            $post_types = array('tribe_events');
+        } else {
+            $resolved = CSI_Cache::load($cache_key);
+            if (!$resolved) {
+                ob_end_clean();
+                wp_send_json_error(array('message' => __('New pages data not found — please re-run Compare.', 'churchedit-sql-importer')));
+            }
+            $new_map = $resolved['pages'];
+            $fields  = CSI_Diff_Engine::PAGE_FIELDS;
+            $content_field = 'page_content';
+            $meta_key   = '_ce_page_id';
+            $post_types = array('page', 'post', 'vacancy');
+        }
+
+        if (!isset($new_map[$id])) {
+            ob_end_clean();
+            wp_send_json_error(array('message' => __('New item data not found.', 'churchedit-sql-importer')));
+        }
+
+        $posts = get_posts(array(
+            'post_type'      => $post_types,
+            'post_status'    => array('publish', 'draft', 'pending', 'private', 'future'),
+            'posts_per_page' => 1,
+            'fields'         => 'ids',
+            'meta_query'     => array(array('key' => $meta_key, 'value' => $id)),
+        ));
+
+        return array(
+            'old'           => $old_map[$id],
+            'new'           => $new_map[$id],
+            'fields'        => $fields,
+            'content_field' => $content_field,
+            'post_id'       => $posts ? (int) $posts[0] : null,
+        );
+    }
+
+    private static function post_links($post_id) {
+        if (!$post_id) {
+            return null;
+        }
+        return array(
+            'id'    => $post_id,
+            'title' => get_the_title($post_id),
+            'edit'  => get_edit_post_link($post_id, 'raw'),
+            'view'  => get_permalink($post_id),
+        );
+    }
+
+    private static function save_source_site_url() {
+        if (isset($_POST['source_site_url'])) {
+            update_option('csi_source_site_url', esc_url_raw(trim(wp_unslash($_POST['source_site_url']))), false);
         }
     }
 
@@ -488,25 +647,25 @@ class CSI_AJAX_Handler {
                 wp_send_json_error(array('message' => __('Parsed data not found — please re-run the parse step.', 'churchedit-sql-importer')));
             }
 
-            $folder_id = isset($_POST['folder_id']) ? sanitize_text_field($_POST['folder_id']) : '';
-            if (!isset($resolved['folders'][$folder_id])) {
-                ob_end_clean();
-                wp_send_json_error(array('message' => __('Unknown folder.', 'churchedit-sql-importer')));
-            }
-
-            $page_ids = $resolved['folders'][$folder_id]['page_ids'];
-
-            // Targeted-update pass from Compare & Update: restrict to only the
-            // page_ids the user selected there instead of the whole folder.
+            // Targeted-update pass from Compare & Update: just the page_ids
+            // the user selected there instead of a whole folder. They needn't
+            // be in the Posts folder — a new item found elsewhere in the
+            // export can be explicitly added as a post ("Add as" in the UI).
             // It's also update-only in intent: existing posts keep their
             // current status, only content changes.
             $only_page_ids = isset($_POST['only_page_ids']) ? array_map('sanitize_text_field', (array) $_POST['only_page_ids']) : array();
             $is_diff_update = !empty($only_page_ids);
             if ($is_diff_update) {
-                $only_page_ids = array_flip($only_page_ids);
-                $page_ids = array_values(array_filter($page_ids, function ($pid) use ($only_page_ids) {
-                    return isset($only_page_ids[$pid]);
+                $page_ids = array_values(array_filter(array_unique($only_page_ids), function ($pid) use ($resolved) {
+                    return isset($resolved['pages'][$pid]);
                 }));
+            } else {
+                $folder_id = isset($_POST['folder_id']) ? sanitize_text_field($_POST['folder_id']) : '';
+                if (!isset($resolved['folders'][$folder_id])) {
+                    ob_end_clean();
+                    wp_send_json_error(array('message' => __('Unknown folder.', 'churchedit-sql-importer')));
+                }
+                $page_ids = $resolved['folders'][$folder_id]['page_ids'];
             }
 
             $offset     = isset($_POST['offset']) ? absint($_POST['offset']) : 0;

@@ -63,6 +63,18 @@ class CSI_Page_Links_Resolver {
         return $results;
     }
 
+    /**
+     * Resolve one post's placeholders right away — used by Compare & Update,
+     * where every page a card can link to already exists, so there's no
+     * reason to leave `<!-- ce:page-links:N -->` placeholders on the page
+     * until the separate Resolve Page Links step is run.
+     */
+    public static function resolve_one($post_id) {
+        $results = array('links_resolved' => 0, 'posts_updated' => 0);
+        self::resolve_post($post_id, $results);
+        return $results['links_resolved'];
+    }
+
     private static function resolve_post($post_id, &$results) {
         $groups = get_post_meta($post_id, '_ce_pending_page_links', true);
 

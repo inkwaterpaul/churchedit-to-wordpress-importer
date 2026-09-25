@@ -42,7 +42,7 @@ class CSI_Content_Converter {
      * support executing) this kind of obfuscation, and left as-is it shows up
      * as a dead "javascript:void(...)" link with no visible email anywhere.
      */
-    private static function decode_obfuscated_emails($html) {
+    public static function decode_obfuscated_emails($html) {
         return preg_replace_callback(
             // The optional "+'...'" suffix (?subject=.../&body=...) is matched
             // as "anything but a double-quote" rather than "anything but a
