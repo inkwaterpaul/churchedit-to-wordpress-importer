@@ -251,6 +251,9 @@ class CSI_Importer {
 
         if (!empty($extraction['groups'])) {
             update_post_meta($post_id, '_ce_pending_page_links', $extraction['groups']);
+            if (!empty($options['preserve_on_update'])) {
+                CSI_Page_Links_Resolver::resolve_one($post_id);
+            }
         } else {
             delete_post_meta($post_id, '_ce_pending_page_links');
         }

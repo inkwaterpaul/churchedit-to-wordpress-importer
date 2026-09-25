@@ -811,13 +811,204 @@
                 $detail.html('<div class="notice notice-error"><p>' + esc(resp.data.message) + '</p></div>');
                 return;
             }
-            var html = '<button type="button" class="button-link csi-diff-detail-close" aria-label="Close">&times; Close</button>';
-            resp.data.rows.forEach(function (row) {
-                html += '<div class="csi-diff-field"><strong>' + esc(row.field) + '</strong>' + row.html + '</div>';
-            });
-            $detail.html(html).data('loaded', true);
+            $detail.html(renderTodoPanel(resp.data, kind, id)).data('loaded', true);
         }).fail(function () {
             $detail.html('<div class="notice notice-error"><p>Request failed.</p></div>');
+        });
+    });
+
+    // "View changes" panel: a to-do list of what changed in ChurchEdit,
+    // checked against the page as it is in WordPress now, for updating the
+    // page by hand. The raw field-by-field diff is still there underneath.
+    var todoLabels = {
+        done: 'Already on the page',
+        todo: 'To do',
+        check: 'Old text not found on the page — check by hand'
+    };
+
+    function renderTodoLines(lines) {
+        if (lines.length === 1) {
+            return renderTodoLine(lines[0]);
+        }
+        return '<ul class="csi-todo-lines">' + lines.map(function (l) { return '<li>' + renderTodoLine(l) + '</li>'; }).join('') + '</ul>';
+    }
+
+    function renderTodoLine(line) {
+        var html = line.text ? '<span class="csi-todo-text">' + esc(line.text) + '</span>' : '';
+        if (line.links.length) {
+            html += '<ul class="csi-todo-links">';
+            line.links.forEach(function (link) {
+                var label = link.text ? esc(link.text) + ' → ' : (link.is_file ? 'Image → ' : '');
+                if (!link.is_file) {
+                    html += '<li>' + label + '<code>' + esc(link.href) + '</code></li>';
+                } else if (link.media_url) {
+                    html += '<li>' + label + '<code>' + esc(link.media_url) + '</code> ' +
+                        '<button type="button" class="button-link csi-copy" data-copy="' + esc(link.media_url) + '">Copy</button></li>';
+                } else {
+                    html += '<li>' + label + '<code>' + esc(link.filename) + '</code> <span class="csi-todo-missing">not in Media Library</span></li>';
+                }
+            });
+            html += '</ul>';
+        }
+        return html;
+    }
+
+    function renderTodoPanel(data, kind, id) {
+        var html = '<button type="button" class="button-link csi-diff-detail-close" aria-label="Close">&times; Close</button>';
+
+        if (data.post) {
+            html += '<p class="csi-todo-post"><strong>' + esc(data.post.title) + '</strong> — ' +
+                '<a href="' + esc(data.post.edit) + '" target="_blank">Edit page ↗</a> · ' +
+                '<a href="' + esc(data.post.view) + '" target="_blank">View ↗</a></p>';
+        } else {
+            html += '<p class="csi-todo-post"><em>Not imported into WordPress yet.</em></p>';
+        }
+
+        var counts = { done: 0, todo: 0, check: 0 };
+        var missing = 0;
+        data.todo.forEach(function (item) {
+            counts[item.status]++;
+            item.new.forEach(function (line) {
+                line.links.forEach(function (l) { if (l.is_file && !l.media_url) { missing++; } });
+            });
+        });
+
+        if (!data.todo.length) {
+            html += '<p><em>No visible text or link changes — only formatting/markup differs.</em></p>';
+        } else {
+            html += '<p class="csi-todo-summary">' + counts.todo + ' to do, ' + counts.check + ' to check, ' + counts.done + ' already done</p>';
+        }
+        if (missing) {
+            html += '<p><button type="button" class="button csi-todo-fetch" data-kind="' + esc(kind) + '" data-id="' + esc(id) + '">' +
+                'Download ' + missing + ' missing file' + (missing > 1 ? 's' : '') + ' &amp; update links</button></p>';
+        }
+        html += '<div class="csi-todo-fetch-result"></div>';
+
+        html += '<ol class="csi-todo">';
+        data.todo.forEach(function (item) {
+            html += '<li class="csi-todo-item csi-todo-' + item.status + '">' +
+                '<span class="csi-todo-status">' + esc(todoLabels[item.status]) + '</span> ';
+            if (item.type === 'change') {
+                html += '<strong>Change</strong><div class="csi-todo-was">Was: ' + renderTodoLines(item.old) + '</div>' +
+                    '<div class="csi-todo-now">Now: ' + renderTodoLines(item.new) + '</div>';
+            } else if (item.type === 'add') {
+                html += '<strong>Add' + (item.new.length > 1 ? ' ' + item.new.length + ' lines' : '') + '</strong><div class="csi-todo-now">' + renderTodoLines(item.new) + '</div>';
+            } else {
+                html += '<strong>Remove' + (item.old.length > 1 ? ' ' + item.old.length + ' lines' : '') + '</strong><div class="csi-todo-was">' + renderTodoLines(item.old) + '</div>';
+            }
+            if (item.after && item.status !== 'done') {
+                html += '<div class="csi-todo-after">After: “' + esc(item.after.length > 90 ? item.after.substr(0, 90) + '…' : item.after) + '”</div>';
+            }
+            html += '</li>';
+        });
+        html += '</ol>';
+
+        if (data.rows && data.rows.length) {
+            html += '<details class="csi-todo-raw"><summary>Raw field-by-field diff</summary>';
+            data.rows.forEach(function (row) {
+                html += '<div class="csi-diff-field"><strong>' + esc(row.field) + '</strong>' + row.html + '</div>';
+            });
+            html += '</details>';
+        }
+        return html;
+    }
+
+    function fetchItemFiles(kind, id) {
+        return $.post(csiAjax.ajaxurl, {
+            action: 'csi_fetch_item_files',
+            nonce: csiAjax.nonce,
+            kind: kind,
+            id: id,
+            cache_key: (kind === 'event') ? calendarCacheKey : cacheKey,
+            old_cache_key: (kind === 'event') ? oldEventsCacheKey : oldPagesCacheKey,
+            source_site_url: $('#csi-source-site-url').val()
+        });
+    }
+
+    function describeFetch(data) {
+        var imported = 0, failed = [];
+        data.files.forEach(function (f) {
+            if (f.status === 'imported') { imported++; }
+            if (f.status === 'failed') { failed.push(f.filename + ' (' + f.error + ')'); }
+        });
+        var text = imported + ' file(s) downloaded, ' + data.relinked + ' link(s) on the page updated.';
+        if (failed.length) {
+            text += ' Failed: ' + failed.join('; ');
+        }
+        return { text: text, failed: failed.length };
+    }
+
+    $(document).on('click', '.csi-todo-fetch', function () {
+        var $btn = $(this).prop('disabled', true);
+        var $detail = $btn.closest('.csi-diff-detail');
+        var kind = $btn.data('kind');
+        var id = $btn.data('id').toString();
+        $detail.find('.csi-todo-fetch-result').html('<span class="spinner is-active" style="float:none;"></span> Downloading…');
+
+        fetchItemFiles(kind, id).done(function (resp) {
+            if (!resp.success) {
+                $btn.prop('disabled', false);
+                $detail.find('.csi-todo-fetch-result').html('<div class="notice notice-error inline"><p>' + esc(resp.data.message) + '</p></div>');
+                return;
+            }
+            var summary = describeFetch(resp.data);
+            var $raw = $detail.find('.csi-todo-raw').detach();
+            $detail.html(renderTodoPanel(resp.data, kind, id)).append($raw);
+            $detail.find('.csi-todo-fetch-result').html('<div class="notice ' + (summary.failed ? 'notice-warning' : 'notice-success') + ' inline"><p>' + esc(summary.text) + '</p></div>');
+        }).fail(function () {
+            $btn.prop('disabled', false);
+            $detail.find('.csi-todo-fetch-result').html('<div class="notice notice-error inline"><p>Request failed.</p></div>');
+        });
+    });
+
+    $(document).on('click', '.csi-diff-fetch-files-btn', function () {
+        var $btn = $(this).prop('disabled', true);
+        var bucket = $btn.data('bucket');
+        var kind = $btn.data('kind');
+        var $results = $('#csi-diff-update-results-' + bucket);
+        var ids = [];
+        $('#csi-diff-list-' + bucket + ' .csi-diff-checkbox:checked').each(function () {
+            ids.push({ id: $(this).data('id').toString(), title: $(this).closest('label').text() });
+        });
+        if (!ids.length) {
+            $btn.prop('disabled', false);
+            $results.html('<div class="notice notice-warning inline"><p>Nothing selected.</p></div>');
+            return;
+        }
+
+        var log = [];
+        (function next(i) {
+            if (i >= ids.length) {
+                $btn.prop('disabled', false);
+                log.push('<div class="csi-log-item">Done — ' + ids.length + ' item(s) checked.</div>');
+                $results.html(log.join(''));
+                return;
+            }
+            $results.html(log.join('') + '<div><span class="spinner is-active" style="float:none;"></span> ' + (i + 1) + ' / ' + ids.length + ': ' + esc(ids[i].title) + '</div>');
+            fetchItemFiles(kind, ids[i].id).done(function (resp) {
+                if (resp.success) {
+                    var summary = describeFetch(resp.data);
+                    if (resp.data.files.length || resp.data.relinked) {
+                        log.push('<div class="csi-log-item ' + (summary.failed ? 'csi-log-error' : 'csi-log-ok') + '">' + esc(ids[i].title) + ': ' + esc(summary.text) + '</div>');
+                    }
+                    // Any open to-do panel for this item is now out of date.
+                    $('#csi-diff-list-' + bucket + ' .csi-diff-view-toggle[data-id="' + ids[i].id + '"]').next('.csi-diff-detail').data('loaded', false);
+                } else {
+                    log.push('<div class="csi-log-item csi-log-error">' + esc(ids[i].title) + ': ' + esc(resp.data.message) + '</div>');
+                }
+            }).fail(function () {
+                log.push('<div class="csi-log-item csi-log-error">' + esc(ids[i].title) + ': request failed</div>');
+            }).always(function () {
+                next(i + 1);
+            });
+        })(0);
+    });
+
+    $(document).on('click', '.csi-copy', function () {
+        var $b = $(this);
+        navigator.clipboard.writeText($b.data('copy')).then(function () {
+            $b.text('Copied');
+            setTimeout(function () { $b.text('Copy'); }, 1500);
         });
     });
 

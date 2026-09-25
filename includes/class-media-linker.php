@@ -223,7 +223,7 @@ class CSI_Media_Linker {
      * silently linking the wrong image. This was the cause of images
      * occasionally getting mixed up on import.
      */
-    private static function find_attachment_by_filename($filename) {
+    public static function find_attachment_by_filename($filename) {
         global $wpdb;
 
         foreach (array_unique(array($filename, sanitize_file_name($filename))) as $candidate) {
@@ -242,5 +242,72 @@ class CSI_Media_Linker {
         }
 
         return false;
+    }
+
+    /**
+     * Download a ChurchEdit file into the Media Library, unless a file with
+     * the same name is already there.
+     *
+     * @return array ['filename'=>, 'url'=> attachment URL|null, 'status'=>'exists'|'imported'|'failed', 'error'=>]
+     */
+    public static function import_file($href) {
+        $filename = urldecode(wp_basename((string) wp_parse_url($href, PHP_URL_PATH)));
+        $existing = self::find_attachment_by_filename($filename);
+        if ($existing) {
+            return array('filename' => $filename, 'url' => wp_get_attachment_url($existing), 'status' => 'exists');
+        }
+
+        $source = CSI_Change_List::download_url_for($href);
+        if (!$source) {
+            return array('filename' => $filename, 'url' => null, 'status' => 'failed', 'error' => 'Set the original site URL to download relative links.');
+        }
+
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        require_once ABSPATH . 'wp-admin/includes/media.php';
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+
+        $tmp = download_url($source, 60);
+        if (is_wp_error($tmp)) {
+            return array('filename' => $filename, 'url' => null, 'status' => 'failed', 'error' => $tmp->get_error_message());
+        }
+
+        $attachment_id = media_handle_sideload(array('name' => $filename, 'tmp_name' => $tmp), 0);
+        if (is_wp_error($attachment_id)) {
+            @unlink($tmp);
+            return array('filename' => $filename, 'url' => null, 'status' => 'failed', 'error' => $attachment_id->get_error_message());
+        }
+
+        return array('filename' => $filename, 'url' => wp_get_attachment_url($attachment_id), 'status' => 'imported');
+    }
+
+    /**
+     * Point every link/image on a post that still goes to a ChurchEdit-hosted
+     * file at the Media Library copy of it, where there is one. Only the
+     * href/src value is touched — the rest of the page is left exactly as it
+     * is.
+     *
+     * @return int Number of links changed
+     */
+    public static function relink_post($post_id) {
+        $content = (string) get_post_field('post_content', $post_id, 'raw');
+        $changed = 0;
+
+        $updated = preg_replace_callback('/\b(href|src)="([^"]+)"/i', function ($m) use (&$changed) {
+            $href = html_entity_decode($m[2], ENT_QUOTES, 'UTF-8');
+            if (!CSI_Change_List::is_churchedit_file($href)) {
+                return $m[0];
+            }
+            $attachment_id = self::find_attachment_by_filename(urldecode(wp_basename((string) wp_parse_url($href, PHP_URL_PATH))));
+            if (!$attachment_id) {
+                return $m[0];
+            }
+            $changed++;
+            return $m[1] . '="' . esc_url(wp_get_attachment_url($attachment_id)) . '"';
+        }, $content);
+
+        if ($changed) {
+            wp_update_post(wp_slash(array('ID' => $post_id, 'post_content' => $updated)));
+        }
+        return $changed;
     }
 }

@@ -25,6 +25,7 @@ class CSI_AJAX_Handler {
         add_action('wp_ajax_csi_compare_pages', array(__CLASS__, 'handle_compare_pages'));
         add_action('wp_ajax_csi_compare_calendar', array(__CLASS__, 'handle_compare_calendar'));
         add_action('wp_ajax_csi_diff_view_item', array(__CLASS__, 'handle_diff_view_item'));
+        add_action('wp_ajax_csi_fetch_item_files', array(__CLASS__, 'handle_fetch_item_files'));
     }
 
     /**
@@ -309,50 +310,147 @@ class CSI_AJAX_Handler {
                 wp_send_json_error(array('message' => __('Permission denied.', 'churchedit-sql-importer')));
             }
 
-            $kind = isset($_POST['kind']) ? sanitize_key($_POST['kind']) : '';
-            $id   = isset($_POST['id']) ? sanitize_text_field($_POST['id']) : '';
-            $old_cache_key = isset($_POST['old_cache_key']) ? sanitize_text_field($_POST['old_cache_key']) : '';
-            $cache_key     = isset($_POST['cache_key']) ? sanitize_text_field($_POST['cache_key']) : '';
-
-            $old_map = CSI_Cache::load($old_cache_key);
-            if (!$old_map || !isset($old_map[$id])) {
-                ob_end_clean();
-                wp_send_json_error(array('message' => __('Old item data not found — please re-run Compare.', 'churchedit-sql-importer')));
-            }
-
-            if ($kind === 'event') {
-                $new_data = CSI_Cache::load($cache_key);
-                if (!$new_data) {
-                    ob_end_clean();
-                    wp_send_json_error(array('message' => __('New calendar data not found — please re-run Compare.', 'churchedit-sql-importer')));
-                }
-                $new_map = CSI_Diff_Engine::key_by($new_data['events'], 'event_id');
-                $fields  = CSI_Diff_Engine::EVENT_FIELDS;
-            } else {
-                $resolved = CSI_Cache::load($cache_key);
-                if (!$resolved) {
-                    ob_end_clean();
-                    wp_send_json_error(array('message' => __('New pages data not found — please re-run Compare.', 'churchedit-sql-importer')));
-                }
-                $new_map = $resolved['pages'];
-                $fields  = CSI_Diff_Engine::PAGE_FIELDS;
-            }
-
-            if (!isset($new_map[$id])) {
-                ob_end_clean();
-                wp_send_json_error(array('message' => __('New item data not found.', 'churchedit-sql-importer')));
-            }
-
-            $rows = CSI_Diff_Engine::render_item_diff($old_map[$id], $new_map[$id], $fields);
+            $item = self::load_diff_item();
+            $rows = CSI_Diff_Engine::render_item_diff($item['old'], $item['new'], $item['fields']);
 
             ob_end_clean();
-            wp_send_json_success(array('rows' => $rows));
+            wp_send_json_success(array(
+                'rows' => $rows,
+                'todo' => CSI_Change_List::build($item['old'][$item['content_field']], $item['new'][$item['content_field']], $item['post_id']),
+                'post' => self::post_links($item['post_id']),
+            ));
         } catch (Exception $e) {
             ob_end_clean();
             wp_send_json_error(array('message' => 'Exception: ' . $e->getMessage()));
         } catch (Error $e) {
             ob_end_clean();
             wp_send_json_error(array('message' => 'Fatal error: ' . $e->getMessage()));
+        }
+    }
+
+    /**
+     * Download the documents/images one changed item's new content links to
+     * that aren't in the Media Library yet, then point any links on its
+     * WordPress post that still go to ChurchEdit-hosted files at the Media
+     * Library copies. Returns the refreshed to-do list.
+     */
+    public static function handle_fetch_item_files() {
+        ob_start();
+        try {
+            check_ajax_referer('csi_nonce', 'nonce');
+            if (!current_user_can('manage_options') || !current_user_can('upload_files')) {
+                ob_end_clean();
+                wp_send_json_error(array('message' => __('Permission denied.', 'churchedit-sql-importer')));
+            }
+
+            self::save_source_site_url();
+            $item = self::load_diff_item();
+
+            @set_time_limit(300);
+
+            $old_html = $item['old'][$item['content_field']];
+            $new_html = $item['new'][$item['content_field']];
+            $files = array();
+            foreach (CSI_Change_List::files_in(CSI_Change_List::build($old_html, $new_html, $item['post_id'])) as $link) {
+                $files[] = CSI_Media_Linker::import_file($link['href']);
+            }
+
+            $relinked = $item['post_id'] ? CSI_Media_Linker::relink_post($item['post_id']) : 0;
+
+            ob_end_clean();
+            wp_send_json_success(array(
+                'files'    => $files,
+                'relinked' => $relinked,
+                'todo'     => CSI_Change_List::build($old_html, $new_html, $item['post_id']),
+                'post'     => self::post_links($item['post_id']),
+            ));
+        } catch (Exception $e) {
+            ob_end_clean();
+            wp_send_json_error(array('message' => 'Exception: ' . $e->getMessage()));
+        } catch (Error $e) {
+            ob_end_clean();
+            wp_send_json_error(array('message' => 'Fatal error: ' . $e->getMessage()));
+        }
+    }
+
+    /**
+     * The old and new source rows for one Compare & Update item (from the
+     * caches the Compare step and step 1/5 wrote), plus the WordPress post it
+     * was imported to. Sends a JSON error and exits if anything's missing.
+     */
+    private static function load_diff_item() {
+        $kind = isset($_POST['kind']) ? sanitize_key($_POST['kind']) : '';
+        $id   = isset($_POST['id']) ? sanitize_text_field($_POST['id']) : '';
+        $old_cache_key = isset($_POST['old_cache_key']) ? sanitize_text_field($_POST['old_cache_key']) : '';
+        $cache_key     = isset($_POST['cache_key']) ? sanitize_text_field($_POST['cache_key']) : '';
+
+        $old_map = CSI_Cache::load($old_cache_key);
+        if (!$old_map || !isset($old_map[$id])) {
+            ob_end_clean();
+            wp_send_json_error(array('message' => __('Old item data not found — please re-run Compare.', 'churchedit-sql-importer')));
+        }
+
+        if ($kind === 'event') {
+            $new_data = CSI_Cache::load($cache_key);
+            if (!$new_data) {
+                ob_end_clean();
+                wp_send_json_error(array('message' => __('New calendar data not found — please re-run Compare.', 'churchedit-sql-importer')));
+            }
+            $new_map = CSI_Diff_Engine::key_by($new_data['events'], 'event_id');
+            $fields  = CSI_Diff_Engine::EVENT_FIELDS;
+            $content_field = 'long_event';
+            $meta_key   = '_ce_event_id';
+            $post_types = array('tribe_events');
+        } else {
+            $resolved = CSI_Cache::load($cache_key);
+            if (!$resolved) {
+                ob_end_clean();
+                wp_send_json_error(array('message' => __('New pages data not found — please re-run Compare.', 'churchedit-sql-importer')));
+            }
+            $new_map = $resolved['pages'];
+            $fields  = CSI_Diff_Engine::PAGE_FIELDS;
+            $content_field = 'page_content';
+            $meta_key   = '_ce_page_id';
+            $post_types = array('page', 'post', 'vacancy');
+        }
+
+        if (!isset($new_map[$id])) {
+            ob_end_clean();
+            wp_send_json_error(array('message' => __('New item data not found.', 'churchedit-sql-importer')));
+        }
+
+        $posts = get_posts(array(
+            'post_type'      => $post_types,
+            'post_status'    => array('publish', 'draft', 'pending', 'private', 'future'),
+            'posts_per_page' => 1,
+            'fields'         => 'ids',
+            'meta_query'     => array(array('key' => $meta_key, 'value' => $id)),
+        ));
+
+        return array(
+            'old'           => $old_map[$id],
+            'new'           => $new_map[$id],
+            'fields'        => $fields,
+            'content_field' => $content_field,
+            'post_id'       => $posts ? (int) $posts[0] : null,
+        );
+    }
+
+    private static function post_links($post_id) {
+        if (!$post_id) {
+            return null;
+        }
+        return array(
+            'id'    => $post_id,
+            'title' => get_the_title($post_id),
+            'edit'  => get_edit_post_link($post_id, 'raw'),
+            'view'  => get_permalink($post_id),
+        );
+    }
+
+    private static function save_source_site_url() {
+        if (isset($_POST['source_site_url'])) {
+            update_option('csi_source_site_url', esc_url_raw(trim(wp_unslash($_POST['source_site_url']))), false);
         }
     }
 

@@ -259,6 +259,13 @@ class CSI_Admin_UI {
                                 <button type="button" class="button button-primary" id="csi-compare-btn"><?php esc_html_e('Upload & Compare', 'churchedit-sql-importer'); ?></button>
                             </td>
                         </tr>
+                        <tr>
+                            <th scope="row"><label for="csi-source-site-url"><?php esc_html_e('Original site URL', 'churchedit-sql-importer'); ?></label></th>
+                            <td>
+                                <input type="url" id="csi-source-site-url" class="regular-text" placeholder="https://www.example.anglican.org" value="<?php echo esc_attr(get_option('csi_source_site_url', '')); ?>">
+                                <p class="description"><?php esc_html_e('The old ChurchEdit site. New documents and images are downloaded from here into the Media Library.', 'churchedit-sql-importer'); ?></p>
+                            </td>
+                        </tr>
                     </table>
                     <div id="csi-compare-status"></div>
 
@@ -302,6 +309,10 @@ class CSI_Admin_UI {
                             </p>
                             <div id="csi-diff-list-<?php echo esc_attr($csi_bucket_key); ?>" class="csi-diff-list"></div>
                             <p>
+                                <button type="button" class="button csi-diff-fetch-files-btn" data-bucket="<?php echo esc_attr($csi_bucket_key); ?>" data-kind="<?php echo esc_attr($csi_bucket['kind']); ?>">
+                                    <?php esc_html_e('Download missing files for selected', 'churchedit-sql-importer'); ?>
+                                </button>
+                                <br>
                                 <label class="csi-diff-force-replace">
                                     <input type="checkbox" id="csi-diff-force-replace-<?php echo esc_attr($csi_bucket_key); ?>">
                                     <?php esc_html_e('Replace whole content (overwrites any edits made in WordPress)', 'churchedit-sql-importer'); ?>

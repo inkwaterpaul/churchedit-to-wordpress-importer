@@ -3,7 +3,7 @@
  * Plugin Name: ChurchEdit SQL Importer
  * Plugin URI: https://inkandwater.co.uk/churchedit-sql-importer
  * Description: Imports a ChurchEdit CMS SQL export into WordPress pages, reconstructing the page hierarchy from ChurchEdit's folders table and converting content to Gutenberg blocks.
- * Version: 1.0.7
+ * Version: 1.0.8
  * Author: Ink & Water
  * Author URI: https://inkandwater.co.uk
  * License: GPL v2 or later
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CSI_VERSION', '1.0.7');
+define('CSI_VERSION', '1.0.8');
 define('CSI_NAME', 'ChurchEdit SQL Importer');
 define('CSI_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('CSI_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -29,6 +29,7 @@ require_once CSI_PLUGIN_DIR . 'includes/class-diff-engine.php';
 require_once CSI_PLUGIN_DIR . 'includes/class-hierarchy-resolver.php';
 require_once CSI_PLUGIN_DIR . 'includes/class-content-converter.php';
 require_once CSI_PLUGIN_DIR . 'includes/class-content-merger.php';
+require_once CSI_PLUGIN_DIR . 'includes/class-change-list.php';
 require_once CSI_PLUGIN_DIR . 'includes/class-page-links-extractor.php';
 require_once CSI_PLUGIN_DIR . 'includes/class-page-links-resolver.php';
 require_once CSI_PLUGIN_DIR . 'includes/class-importer.php';
@@ -92,6 +93,7 @@ class CSI_Plugin {
         wp_localize_script('csi-admin-script', 'csiAjax', array(
             'ajaxurl' => admin_url('admin-ajax.php'),
             'nonce'   => wp_create_nonce('csi_nonce'),
+            'sourceSiteUrl' => get_option('csi_source_site_url', ''),
         ));
     }
 }
