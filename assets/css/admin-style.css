@@ -31,7 +31,11 @@
 .csi-diff-item:last-child { border-bottom: none; }
 .csi-diff-fields { color: #646970; font-size: 12px; }
 .csi-diff-view-toggle { margin-left: 8px; font-size: 12px; }
+.csi-diff-list { position: relative; }
+.csi-diff-select-bar { margin: 4px 0; }
+.csi-diff-selected-count { margin-left: 10px; color: #646970; }
 .csi-diff-detail { margin: 8px 0 4px 24px; padding: 8px; background: #fff; border: 1px solid #dcdcde; }
+.csi-diff-detail-close { position: sticky; top: 0; float: right; z-index: 1; padding: 2px 6px; background: #fff; border: 1px solid #dcdcde; border-radius: 3px; text-decoration: none; }
 .csi-diff-detail .diff { width: 100%; }
 .csi-diff-field { margin-bottom: 10px; }
 .csi-diff-removed { font-size: 12px; color: #646970; }

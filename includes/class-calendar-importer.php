@@ -34,39 +34,15 @@ class CSI_Calendar_Importer {
             $event_id = $event['event_id'];
             $ref = 'event:' . $event_id;
 
-            $start = self::build_datetime($event['year'], $event['month'], $event['day'], $event['hour'], $event['minute']);
-            if (!$start) {
+            $args = self::build_event_args($event);
+            if (!$args) {
                 return array('ref' => $ref, 'success' => false, 'error' => 'Could not build a valid start date from source fields.');
             }
-            $end = self::build_datetime($event['year'], $event['month'], $event['day'], $event['FinishHour'], $event['FinishMinute']);
-            if (!$end || $end < $start) {
-                $end = $start;
-            }
-
-            $all_day = ($event['AllDay'] === 'Y') || ($event['hour'] === null || $event['hour'] === '');
+            $content = $args['post_content'];
 
             $is_private = ($event['private'] === 'Y') || (!empty($event['event_access']) && $event['event_access'] !== 'everyone');
             $status = $is_private ? 'draft' : $options['default_status'];
-
-            $content = CSI_Content_Converter::convert($event['long_event']);
-
-            $args = array(
-                'post_title'    => wp_strip_all_tags($event['short_event']),
-                'post_content'  => $content,
-                'post_excerpt'  => $event['summary'] ? wp_strip_all_tags($event['summary']) : '',
-                'post_status'   => $status,
-                'EventStartDate' => $start->format('Y-m-d'),
-                'EventStartHour' => $start->format('H'),
-                'EventStartMinute' => $start->format('i'),
-                'EventEndDate'  => $end->format('Y-m-d'),
-                'EventEndHour'  => $end->format('H'),
-                'EventEndMinute' => $end->format('i'),
-                'EventAllDay'   => $all_day,
-            );
-
-            if (!empty($event['web_address'])) {
-                $args['EventURL'] = $event['web_address'];
-            }
+            $args['post_status'] = $status;
 
             $location_id = self::norm_id($event['location_id']);
             if ($location_id !== null && isset($locations[$location_id])) {
@@ -89,7 +65,44 @@ class CSI_Calendar_Importer {
                 $status = get_post($existing)->post_status;
             }
 
-            if ($existing) {
+            if ($existing && CSI_Importer::is_merge_update($options)) {
+                // Compare & Update: apply only what changed between the old
+                // and new export (see CSI_Content_Merger). Dates, all-day,
+                // URL and venue are only rewritten if one of them changed in
+                // the source.
+                $old_event  = isset($options['old_rows'][$event_id]) ? $options['old_rows'][$event_id] : null;
+                $old_args   = $old_event ? self::build_event_args($old_event) : null;
+                $field_keys = array('post_title' => 1, 'post_content' => 1, 'post_excerpt' => 1);
+
+                $prepared = CSI_Content_Merger::prepare_update(
+                    $existing,
+                    $old_args ? array_intersect_key($old_args, $field_keys) : null,
+                    array_intersect_key($args, $field_keys),
+                    $ref,
+                    $event['short_event']
+                );
+
+                $schedule_changed = $old_args && (
+                    array_diff_key($old_args, $field_keys) != array_diff_key(self::build_event_args($event), $field_keys)
+                    || self::norm_id($old_event['location_id']) !== $location_id
+                );
+
+                // Nothing to do (or a conflict) — unless the schedule/venue
+                // changed, which still applies when the text is unchanged.
+                if ($prepared['result'] && !($schedule_changed && $prepared['result']['success'])) {
+                    return $prepared['result'];
+                }
+
+                $fields = $prepared['fields'] ? $prepared['fields'] : array();
+                if ($schedule_changed) {
+                    $args = array_merge(array_diff_key($args, $field_keys), $fields, array('ID' => $existing));
+                    $post_id = tribe_update_event($existing, $args);
+                } else {
+                    $post_id = wp_update_post(array_merge($fields, array('ID' => $existing)));
+                }
+                $action  = 'updated';
+                $content = get_post_field('post_content', $existing, 'raw');
+            } elseif ($existing) {
                 $args['ID'] = $existing;
                 $post_id = tribe_update_event($existing, $args);
                 $action = 'updated';
@@ -136,6 +149,44 @@ class CSI_Calendar_Importer {
         } catch (Error $e) {
             return array('ref' => 'event:' . $event['event_id'], 'success' => false, 'error' => 'Fatal error: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Post fields and Events Calendar schedule args exactly as an import of
+     * this calendar row produces them (minus status and venue, which depend
+     * on options/other tables) — also run on the OLD export's row during
+     * Compare & Update. Null if no valid start date can be built.
+     */
+    private static function build_event_args($event) {
+        $start = self::build_datetime($event['year'], $event['month'], $event['day'], $event['hour'], $event['minute']);
+        if (!$start) {
+            return null;
+        }
+        $end = self::build_datetime($event['year'], $event['month'], $event['day'], $event['FinishHour'], $event['FinishMinute']);
+        if (!$end || $end < $start) {
+            $end = $start;
+        }
+
+        $all_day = ($event['AllDay'] === 'Y') || ($event['hour'] === null || $event['hour'] === '');
+
+        $args = array(
+            'post_title'       => wp_strip_all_tags($event['short_event']),
+            'post_content'     => CSI_Content_Converter::convert($event['long_event']),
+            'post_excerpt'     => $event['summary'] ? wp_strip_all_tags($event['summary']) : '',
+            'EventStartDate'   => $start->format('Y-m-d'),
+            'EventStartHour'   => $start->format('H'),
+            'EventStartMinute' => $start->format('i'),
+            'EventEndDate'     => $end->format('Y-m-d'),
+            'EventEndHour'     => $end->format('H'),
+            'EventEndMinute'   => $end->format('i'),
+            'EventAllDay'      => $all_day,
+        );
+
+        if (!empty($event['web_address'])) {
+            $args['EventURL'] = $event['web_address'];
+        }
+
+        return $args;
     }
 
     /**

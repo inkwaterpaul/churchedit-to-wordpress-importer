@@ -191,7 +191,7 @@
                 if (r.success) {
                     log.push('<div class="csi-log-item csi-log-ok">' + r.action + ': ' + esc(r.title || r.ref) + (r.draft ? ' (draft)' : '') + '</div>');
                 } else {
-                    log.push('<div class="csi-log-item csi-log-error">' + esc(r.ref) + ': ' + esc(r.error) + '</div>');
+                    log.push('<div class="csi-log-item csi-log-error">' + esc(r.title || r.ref) + ': ' + esc(r.error) + '</div>');
                 }
             });
             $('#csi-results-content').html(log.join(''));
@@ -446,7 +446,7 @@
                 if (r.success) {
                     log.push('<div class="csi-log-item csi-log-ok">' + r.action + ': ' + esc(r.title || r.ref) + (r.draft ? ' (draft)' : '') + '</div>');
                 } else {
-                    log.push('<div class="csi-log-item csi-log-error">' + esc(r.ref) + ': ' + esc(r.error) + '</div>');
+                    log.push('<div class="csi-log-item csi-log-error">' + esc(r.title || r.ref) + ': ' + esc(r.error) + '</div>');
                 }
             });
             $('#csi-posts-results-content').html(log.join(''));
@@ -503,7 +503,7 @@
                     var closing = r.closing_date ? ' — closing ' + esc(r.closing_date) : ' — no closing date found';
                     log.push('<div class="csi-log-item csi-log-ok">' + r.action + ': ' + esc(r.title || r.ref) + cat + closing + (r.draft ? ' (draft)' : '') + '</div>');
                 } else {
-                    log.push('<div class="csi-log-item csi-log-error">' + esc(r.ref) + ': ' + esc(r.error) + '</div>');
+                    log.push('<div class="csi-log-item csi-log-error">' + esc(r.title || r.ref) + ': ' + esc(r.error) + '</div>');
                 }
             });
             $('#csi-vacancies-results-content').html(log.join(''));
@@ -588,7 +588,7 @@
                 if (r.success) {
                     log.push('<div class="csi-log-item csi-log-ok">' + r.action + ': ' + esc(r.title || r.ref) + (r.draft ? ' (draft)' : '') + '</div>');
                 } else {
-                    log.push('<div class="csi-log-item csi-log-error">' + esc(r.ref) + ': ' + esc(r.error) + '</div>');
+                    log.push('<div class="csi-log-item csi-log-error">' + esc(r.title || r.ref) + ': ' + esc(r.error) + '</div>');
                 }
             });
             $('#csi-calendar-results-content').html(log.join(''));
@@ -658,6 +658,7 @@
                 ' — not auto-deleted; remove manually in WP if desired.</p>';
         }
         $('#csi-diff-list-' + bucketKey).html(html);
+        updateDiffSelectedCount(bucketKey);
     }
 
     function runCompareCalendar(oldFilePath, $btn, extraNote) {
@@ -757,9 +758,22 @@
         });
     });
 
-    $(document).on('change', '.csi-diff-select-all', function () {
+    function updateDiffSelectedCount(bucket) {
+        var $boxes = $('#csi-diff-list-' + bucket + ' .csi-diff-checkbox');
+        var text = $boxes.length ? $boxes.filter(':checked').length + ' of ' + $boxes.length + ' selected' : '';
+        $('#csi-diff-selected-count-' + bucket).text(text);
+    }
+
+    $(document).on('click', '.csi-diff-select', function (e) {
+        e.preventDefault();
         var bucket = $(this).data('bucket');
-        $('#csi-diff-list-' + bucket + ' .csi-diff-checkbox').prop('checked', $(this).prop('checked'));
+        $('#csi-diff-list-' + bucket + ' .csi-diff-checkbox').prop('checked', $(this).data('select') === 'all');
+        updateDiffSelectedCount(bucket);
+    });
+
+    $(document).on('change', '.csi-diff-checkbox', function () {
+        var id = $(this).closest('.csi-diff-list').attr('id');
+        updateDiffSelectedCount(id.replace('csi-diff-list-', ''));
     });
 
     $(document).on('click', '.csi-diff-view-toggle', function (e) {
@@ -767,8 +781,14 @@
         var $link = $(this);
         var $detail = $link.next('.csi-diff-detail');
 
+        if ($detail.is(':visible')) {
+            closeDiffDetail($detail);
+            return;
+        }
+        $link.text('hide changes');
+
         if ($detail.data('loaded')) {
-            $detail.toggle();
+            $detail.show();
             return;
         }
 
@@ -791,7 +811,7 @@
                 $detail.html('<div class="notice notice-error"><p>' + esc(resp.data.message) + '</p></div>');
                 return;
             }
-            var html = '';
+            var html = '<button type="button" class="button-link csi-diff-detail-close" aria-label="Close">&times; Close</button>';
             resp.data.rows.forEach(function (row) {
                 html += '<div class="csi-diff-field"><strong>' + esc(row.field) + '</strong>' + row.html + '</div>';
             });
@@ -799,6 +819,28 @@
         }).fail(function () {
             $detail.html('<div class="notice notice-error"><p>Request failed.</p></div>');
         });
+    });
+
+    // The detail panel sits inside the scrolling .csi-diff-list, so a long
+    // content diff pushes the "view changes" link out of view — the panel
+    // carries its own Close button and scrolls the item back into view.
+    function closeDiffDetail($detail) {
+        var $link = $detail.prev('.csi-diff-view-toggle');
+        $detail.hide();
+        $link.text('view changes');
+        var $list = $detail.closest('.csi-diff-list');
+        var $item = $detail.closest('.csi-diff-item');
+        if ($list.length && $item.length) {
+            var itemTop = $item.position().top;
+            if (itemTop < 0) {
+                $list.scrollTop($list.scrollTop() + itemTop);
+            }
+        }
+    }
+
+    $(document).on('click', '.csi-diff-detail-close', function (e) {
+        e.preventDefault();
+        closeDiffDetail($(this).closest('.csi-diff-detail'));
     });
 
     function runDiffUpdateBatch(bucket, action, param, kind, values, offset, log) {
@@ -811,7 +853,9 @@
             nonce: csiAjax.nonce,
             offset: 0,
             batch_size: batchSize,
-            cache_key: (kind === 'event') ? calendarCacheKey : cacheKey
+            cache_key: (kind === 'event') ? calendarCacheKey : cacheKey,
+            old_cache_key: (kind === 'event') ? oldEventsCacheKey : oldPagesCacheKey,
+            force_replace: $('#csi-diff-force-replace-' + bucket).is(':checked') ? '1' : '0'
         };
         data[param] = slice;
 
@@ -848,7 +892,7 @@
                 if (r.success) {
                     log.push('<div class="csi-log-item csi-log-ok">' + r.action + ': ' + esc(r.title || r.ref) + (r.draft ? ' (draft)' : '') + '</div>');
                 } else {
-                    log.push('<div class="csi-log-item csi-log-error">' + esc(r.ref) + ': ' + esc(r.error) + '</div>');
+                    log.push('<div class="csi-log-item csi-log-error">' + esc(r.title || r.ref) + ': ' + esc(r.error) + '</div>');
                 }
             });
             $(resultsBox).html(log.join(''));

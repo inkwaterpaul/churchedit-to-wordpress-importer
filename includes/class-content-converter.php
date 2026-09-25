@@ -229,11 +229,11 @@ class CSI_Content_Converter {
             $node = $children[$i];
 
             if ($node instanceof DOMElement && self::is_accordion_component($node)) {
-                $rows = array();
+                $parts = array();
                 while ($i < $count) {
                     $candidate = $children[$i];
                     if ($candidate instanceof DOMElement && self::is_accordion_component($candidate)) {
-                        $rows = array_merge($rows, self::extract_accordion_rows($candidate));
+                        $parts = array_merge($parts, self::flatten_accordion($candidate));
                         $i++;
                     } elseif (self::is_insignificant_text($candidate)) {
                         $i++;
@@ -241,7 +241,37 @@ class CSI_Content_Converter {
                         break;
                     }
                 }
-                $blocks .= self::build_accordion_block($rows);
+
+                // Consecutive rows become one wp:accordion; any stray content
+                // found inside a wrapper (see flatten_accordion()) is emitted
+                // as normal blocks in its original position, splitting the
+                // accordion there rather than being dropped.
+                $rows  = array();
+                $stray = array();
+                foreach ($parts as $part) {
+                    if (self::is_insignificant_text($part)) {
+                        continue;
+                    }
+                    if ($part instanceof DOMElement && self::has_class($part, 'accordion-row')) {
+                        if ($stray) {
+                            $blocks .= self::nodes_to_blocks($stray);
+                            $stray = array();
+                        }
+                        $rows[] = $part;
+                    } else {
+                        if ($rows) {
+                            $blocks .= self::build_accordion_block($rows);
+                            $rows = array();
+                        }
+                        $stray[] = $part;
+                    }
+                }
+                if ($rows) {
+                    $blocks .= self::build_accordion_block($rows);
+                }
+                if ($stray) {
+                    $blocks .= self::nodes_to_blocks($stray);
+                }
                 continue;
             }
 
@@ -335,14 +365,27 @@ class CSI_Content_Converter {
 
     /**
      * A `.accordion-row` is a single row and is returned as-is; a `.accordion`
-     * wrapper is expanded to whichever `.accordion-row`s it contains (one, in
-     * most of ChurchEdit's export, but never assumed).
+     * wrapper is expanded, in document order, into its rows plus any other
+     * child nodes. ChurchEdit's export routinely leaves `.accordion` divs
+     * unclosed, so the parser nests each following accordion — and whatever
+     * page content comes after the last one (headings, tables, buttons) —
+     * inside the previous wrapper. Nested wrappers are expanded recursively
+     * and that trailing content is returned as-is so the caller can emit it
+     * as normal blocks instead of losing it.
      */
-    private static function extract_accordion_rows($node) {
+    private static function flatten_accordion($node) {
         if (self::has_class($node, 'accordion-row')) {
             return array($node);
         }
-        return self::find_all_by_class($node, 'accordion-row');
+        $parts = array();
+        foreach ($node->childNodes as $child) {
+            if ($child instanceof DOMElement && self::is_accordion_component($child)) {
+                $parts = array_merge($parts, self::flatten_accordion($child));
+            } else {
+                $parts[] = $child;
+            }
+        }
+        return $parts;
     }
 
     /**
@@ -415,8 +458,12 @@ class CSI_Content_Converter {
         $title_node = self::find_first_by_class($row, 'accordion-row-title');
         $title_html = $title_node ? trim(self::inner_html($title_node)) : '';
 
-        $body_node   = self::find_first_by_class($row, 'accordion-row-body');
-        $body_blocks = $body_node ? self::nodes_to_blocks($body_node->childNodes) : '';
+        // A row usually holds several `.accordion-row-body` divs, one per
+        // line/paragraph of the panel — every one of them goes in the panel.
+        $body_blocks = '';
+        foreach (self::find_all_by_class($row, 'accordion-row-body') as $body_node) {
+            $body_blocks .= self::nodes_to_blocks($body_node->childNodes);
+        }
         if (trim($body_blocks) === '') {
             $body_blocks = "<!-- wp:paragraph -->\n<p></p>\n<!-- /wp:paragraph -->\n\n";
         }

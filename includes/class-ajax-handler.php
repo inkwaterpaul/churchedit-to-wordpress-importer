@@ -28,6 +28,24 @@ class CSI_AJAX_Handler {
     }
 
     /**
+     * Extra import options for a Compare & Update pass: the OLD export's rows
+     * (cached by the Compare step, keyed by page_id/event_id) so each
+     * importer can merge in only what changed, and whether the user asked to
+     * replace whole posts instead.
+     */
+    private static function diff_update_options($is_diff_update) {
+        if (!$is_diff_update) {
+            return array();
+        }
+        $old_cache_key = isset($_POST['old_cache_key']) ? sanitize_text_field($_POST['old_cache_key']) : '';
+        $old_rows = $old_cache_key !== '' ? CSI_Cache::load($old_cache_key) : null;
+        return array(
+            'old_rows'      => is_array($old_rows) ? $old_rows : array(),
+            'force_replace' => isset($_POST['force_replace']) && $_POST['force_replace'] === '1',
+        );
+    }
+
+    /**
      * Compare an OLD export's `pages` table against the already-parsed NEW
      * dataset (cached by step 1), bucketed into Pages-tree / Posts-folder /
      * Vacancies-folder using the exact same folder data those steps use —
@@ -422,6 +440,7 @@ class CSI_AJAX_Handler {
                 'default_status'    => (isset($_POST['default_status']) && in_array($_POST['default_status'], array('draft', 'publish', 'pending'), true)) ? $_POST['default_status'] : 'draft',
                 'preserve_on_update' => $is_diff_update,
             );
+            $options = array_merge($options, self::diff_update_options($is_diff_update));
 
             @set_time_limit(120);
 
@@ -499,6 +518,7 @@ class CSI_AJAX_Handler {
                 'default_status'     => (isset($_POST['default_status']) && in_array($_POST['default_status'], array('draft', 'publish', 'pending'), true)) ? $_POST['default_status'] : 'draft',
                 'preserve_on_update' => $is_diff_update,
             );
+            $options = array_merge($options, self::diff_update_options($is_diff_update));
 
             @set_time_limit(120);
 
@@ -627,6 +647,7 @@ class CSI_AJAX_Handler {
                 'default_status'     => (isset($_POST['default_status']) && in_array($_POST['default_status'], array('draft', 'publish', 'pending'), true)) ? $_POST['default_status'] : 'draft',
                 'preserve_on_update' => $is_diff_update,
             );
+            $options = array_merge($options, self::diff_update_options($is_diff_update));
 
             @set_time_limit(120);
 
@@ -1029,6 +1050,7 @@ class CSI_AJAX_Handler {
             if (!empty($only_refs)) {
                 $order = array_values(array_unique($only_refs));
                 $options['preserve_on_update'] = true;
+                $options = array_merge($options, self::diff_update_options(true));
             } else {
                 $order = CSI_Importer::get_import_order($resolved, $selected_folder_ids, $selected_page_ids);
             }
