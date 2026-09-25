@@ -116,24 +116,43 @@ class CSI_AJAX_Handler {
 
             $bucketed_ids = $pages_tree_ids + $posts_ids + $vacancies_ids;
 
-            $buckets = array(
-                'pages'     => self::bucket_page_diff($diff, $pages_tree_ids, $resolved['pages'], $old_pages, 'page'),
-                'posts'     => self::bucket_page_diff($diff, $posts_ids, $resolved['pages'], $old_pages, 'post'),
-                'vacancies' => self::bucket_page_diff($diff, $vacancies_ids, $resolved['pages'], $old_pages, 'vacancy'),
-            );
+            // What each source page already is in WordPress (page/post/
+            // vacancy), if anything — an existing item is always updated as
+            // that type; only items not in WordPress yet get an "Add as"
+            // choice in the UI.
+            global $wpdb;
+            $in_wp = array();
+            foreach ($wpdb->get_results(
+                "SELECT m.meta_value AS page_id, p.post_type FROM {$wpdb->postmeta} m
+                 JOIN {$wpdb->posts} p ON p.ID = m.post_id
+                 WHERE m.meta_key = '_ce_page_id' AND p.post_status <> 'trash'
+                   AND p.post_type IN ('page', 'post', 'vacancy')"
+            ) as $row) {
+                $in_wp[(string) $row->page_id] = $row->post_type;
+            }
 
-            $other_changed = 0;
-            foreach ($diff['changed'] as $id => $info) {
+            // Everything that changed or was added but falls outside the
+            // Pages tree and the selected Posts/Vacancies folders — e.g. a
+            // new item in an excluded "news" folder when no Posts folder is
+            // selected. Listed rather than silently left out.
+            $other_ids = array();
+            foreach (array_merge(array_keys($diff['changed']), $diff['added']) as $id) {
                 if (!isset($bucketed_ids[$id])) {
-                    $other_changed++;
+                    $other_ids[$id] = true;
                 }
             }
+
+            $buckets = array(
+                'pages'     => self::bucket_page_diff($diff, $pages_tree_ids, $resolved, $old_pages, 'page', $in_wp),
+                'posts'     => self::bucket_page_diff($diff, $posts_ids, $resolved, $old_pages, 'post', $in_wp),
+                'vacancies' => self::bucket_page_diff($diff, $vacancies_ids, $resolved, $old_pages, 'vacancy', $in_wp),
+                'other'     => self::bucket_page_diff($diff, $other_ids, $resolved, $old_pages, 'page', $in_wp),
+            );
 
             ob_end_clean();
             wp_send_json_success(array(
                 'old_pages_cache_key' => $old_cache_key,
                 'buckets'             => $buckets,
-                'other_changed'       => $other_changed,
             ));
         } catch (Exception $e) {
             ob_end_clean();
@@ -176,7 +195,8 @@ class CSI_AJAX_Handler {
      * fields (title/ref for removed items comes from the OLD row, since
      * there's no NEW row to read it from).
      */
-    private static function bucket_page_diff($diff, $id_set, $new_pages, $old_pages, $ref_prefix) {
+    private static function bucket_page_diff($diff, $id_set, $resolved, $old_pages, $ref_prefix, $in_wp) {
+        $new_pages = $resolved['pages'];
         $changed = array();
         foreach ($diff['changed'] as $id => $info) {
             if (!isset($id_set[$id])) {
@@ -186,6 +206,9 @@ class CSI_AJAX_Handler {
                 'ref'    => $ref_prefix . ':' . $id,
                 'id'     => $id,
                 'title'  => $new_pages[$id]['page_title'],
+                'breadcrumb' => self::breadcrumb($resolved, $id),
+                'in_wp'  => isset($in_wp[(string) $id]),
+                'wp_type' => isset($in_wp[(string) $id]) ? $in_wp[(string) $id] : null,
                 'fields' => $info['fields'],
             );
         }
@@ -193,7 +216,7 @@ class CSI_AJAX_Handler {
         $added = array();
         foreach ($diff['added'] as $id) {
             if (isset($id_set[$id])) {
-                $added[] = array('ref' => $ref_prefix . ':' . $id, 'id' => $id, 'title' => $new_pages[$id]['page_title']);
+                $added[] = array('ref' => $ref_prefix . ':' . $id, 'id' => $id, 'title' => $new_pages[$id]['page_title'], 'breadcrumb' => self::breadcrumb($resolved, $id), 'in_wp' => isset($in_wp[(string) $id]), 'wp_type' => isset($in_wp[(string) $id]) ? $in_wp[(string) $id] : null);
             }
         }
 
@@ -217,6 +240,44 @@ class CSI_AJAX_Handler {
             'removed'         => $removed,
             'unchanged_count' => $unchanged_count,
         );
+    }
+
+    /**
+     * Where a page sits in the ChurchEdit folder tree, as a list of parent
+     * titles from the top down — shown above each Compare & Update item,
+     * since plenty of pages share near-identical titles ("Safeguarding",
+     * "Resources"…). Each folder is named the way the importer titles it in
+     * WordPress: by its main page's title, else its folder name.
+     */
+    private static function breadcrumb($resolved, $page_id) {
+        $folders = $resolved['folders'];
+        $page    = $resolved['pages'][$page_id];
+        $folder_id = isset($page['folder_id']) ? (string) $page['folder_id'] : '';
+
+        // A folder's own main page *is* that folder level — start above it.
+        if (!empty($page['is_folder_node']) && isset($folders[$folder_id]) && $folders[$folder_id]['node_ref'] === 'page:' . $page_id) {
+            $folder_id = (string) $folders[$folder_id]['parent_id'];
+        }
+
+        $crumbs = array();
+        $seen   = array();
+        while ($folder_id !== '' && $folder_id !== '0' && isset($folders[$folder_id]) && !isset($seen[$folder_id])) {
+            $seen[$folder_id] = true;
+            $folder = $folders[$folder_id];
+            $node   = isset($folder['node_ref']) ? (string) $folder['node_ref'] : '';
+            if (strpos($node, 'page:') === 0 && isset($resolved['pages'][substr($node, 5)])) {
+                $name = $resolved['pages'][substr($node, 5)]['page_title'];
+            } else {
+                $name = ucwords(str_replace(array('-', '_'), ' ', $folder['folder_name'] ? $folder['folder_name'] : $folder['folder_full_name']));
+            }
+            $name = preg_replace('/^[\s\p{Z}]+|[\s\p{Z}]+$/u', '', wp_strip_all_tags($name));
+            // A "-noshow" folder shares its parent's node, so it'd repeat it.
+            if ($name !== '' && (empty($crumbs) || $crumbs[0] !== $name)) {
+                array_unshift($crumbs, $name);
+            }
+            $folder_id = (string) $folder['parent_id'];
+        }
+        return $crumbs;
     }
 
     /**
@@ -586,25 +647,25 @@ class CSI_AJAX_Handler {
                 wp_send_json_error(array('message' => __('Parsed data not found — please re-run the parse step.', 'churchedit-sql-importer')));
             }
 
-            $folder_id = isset($_POST['folder_id']) ? sanitize_text_field($_POST['folder_id']) : '';
-            if (!isset($resolved['folders'][$folder_id])) {
-                ob_end_clean();
-                wp_send_json_error(array('message' => __('Unknown folder.', 'churchedit-sql-importer')));
-            }
-
-            $page_ids = $resolved['folders'][$folder_id]['page_ids'];
-
-            // Targeted-update pass from Compare & Update: restrict to only the
-            // page_ids the user selected there instead of the whole folder.
+            // Targeted-update pass from Compare & Update: just the page_ids
+            // the user selected there instead of a whole folder. They needn't
+            // be in the Posts folder — a new item found elsewhere in the
+            // export can be explicitly added as a post ("Add as" in the UI).
             // It's also update-only in intent: existing posts keep their
             // current status, only content changes.
             $only_page_ids = isset($_POST['only_page_ids']) ? array_map('sanitize_text_field', (array) $_POST['only_page_ids']) : array();
             $is_diff_update = !empty($only_page_ids);
             if ($is_diff_update) {
-                $only_page_ids = array_flip($only_page_ids);
-                $page_ids = array_values(array_filter($page_ids, function ($pid) use ($only_page_ids) {
-                    return isset($only_page_ids[$pid]);
+                $page_ids = array_values(array_filter(array_unique($only_page_ids), function ($pid) use ($resolved) {
+                    return isset($resolved['pages'][$pid]);
                 }));
+            } else {
+                $folder_id = isset($_POST['folder_id']) ? sanitize_text_field($_POST['folder_id']) : '';
+                if (!isset($resolved['folders'][$folder_id])) {
+                    ob_end_clean();
+                    wp_send_json_error(array('message' => __('Unknown folder.', 'churchedit-sql-importer')));
+                }
+                $page_ids = $resolved['folders'][$folder_id]['page_ids'];
             }
 
             $offset     = isset($_POST['offset']) ? absint($_POST['offset']) : 0;

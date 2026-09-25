@@ -620,6 +620,30 @@
     var oldPagesCacheKey = null;
     var oldEventsCacheKey = null;
 
+    // Parent folders above each item's title — many pages share
+    // near-identical titles ("Safeguarding", "Resources"…).
+    function renderBreadcrumb(item) {
+        if (!item.breadcrumb || !item.breadcrumb.length) {
+            return '';
+        }
+        return '<div class="csi-diff-breadcrumb">' + item.breadcrumb.map(esc).join(' › ') + '</div>';
+    }
+
+    // Items with no WordPress post yet can be created as a different type
+    // than their section implies — a new item in a Pages folder may really
+    // be a news post, and vice versa.
+    function renderAddAs(bucketKey, item) {
+        if (item.in_wp || bucketKey === 'events') {
+            return '';
+        }
+        var options = bucketKey === 'vacancies' ? ['vacancy', 'page', 'post'] : (bucketKey === 'other' ? ['post', 'page'] : ['page', 'post']);
+        var html = ' <label class="csi-diff-as-label">Add as <select class="csi-diff-as">';
+        options.forEach(function (t) {
+            html += '<option value="' + t + '"' + (t === bucketTargets[bucketKey] ? ' selected' : '') + '>' + diffTargets[t].label + '</option>';
+        });
+        return html + '</select></label>';
+    }
+
     function renderDiffList(bucketKey, data, kind) {
         var summary = data.changed.length + ' changed, ' + data.added.length + ' added, ' +
             data.removed.length + ' removed, ' + data.unchanged_count + ' unchanged.';
@@ -630,11 +654,14 @@
             html += '<p><em>No changed or new items.</em></p>';
         }
         data.changed.forEach(function (item) {
-            html += '<div class="csi-diff-item">' +
+            html += '<div class="csi-diff-item">' + renderBreadcrumb(item) +
                 '<label><input type="checkbox" class="csi-diff-checkbox" checked' +
-                ' data-ref="' + esc(item.ref) + '" data-id="' + esc(item.id) + '"> ' +
+                ' data-ref="' + esc(item.ref) + '" data-id="' + esc(item.id) + '" data-title="' + esc(item.title || item.ref) + '"' +
+                (item.wp_type ? ' data-wp-type="' + esc(item.wp_type) + '"' : '') + '> ' +
                 esc(item.title || item.ref) +
-                ' <span class="csi-diff-fields">(' + esc(item.fields.join(', ')) + ')</span></label>' +
+                ' <span class="csi-diff-fields">(' + esc(item.fields.join(', ')) + ')</span>' +
+                (item.in_wp === false ? ' <span class="csi-diff-new">(not in WordPress yet)</span>' : '') + '</label>' +
+                renderAddAs(bucketKey, item) +
                 ' <a href="#" class="csi-diff-view-toggle" data-kind="' + kind + '" data-id="' + esc(item.id) + '">view changes</a>' +
                 '<div class="csi-diff-detail" style="display:none;"></div>' +
                 '</div>';
@@ -645,11 +672,13 @@
         // steps do), it doesn't only update. There's no prior version to
         // diff against, so no "view changes" link here.
         data.added.forEach(function (item) {
-            html += '<div class="csi-diff-item">' +
+            html += '<div class="csi-diff-item">' + renderBreadcrumb(item) +
                 '<label><input type="checkbox" class="csi-diff-checkbox" checked' +
-                ' data-ref="' + esc(item.ref) + '" data-id="' + esc(item.id) + '"> ' +
+                ' data-ref="' + esc(item.ref) + '" data-id="' + esc(item.id) + '" data-title="' + esc(item.title || item.ref) + '"' +
+                (item.wp_type ? ' data-wp-type="' + esc(item.wp_type) + '"' : '') + '> ' +
                 esc(item.title || item.ref) +
                 ' <span class="csi-diff-fields csi-diff-new">(new)</span></label>' +
+                renderAddAs(bucketKey, item) +
                 '</div>';
         });
         if (data.removed.length) {
@@ -701,17 +730,14 @@
             renderDiffList('pages', resp.data.buckets.pages, 'page');
             renderDiffList('posts', resp.data.buckets.posts, 'page');
             renderDiffList('vacancies', resp.data.buckets.vacancies, 'page');
+            renderDiffList('other', resp.data.buckets.other, 'page');
             $('#csi-compare-results').show();
 
-            var otherNote = resp.data.other_changed
-                ? (' ' + resp.data.other_changed + ' other changed item(s) fell outside the Pages/Posts/Vacancies selections and aren\'t shown.')
-                : '';
-
             if (calendarCacheKey) {
-                runCompareCalendar(oldFilePath, $btn, otherNote);
+                runCompareCalendar(oldFilePath, $btn, '');
             } else {
                 $btn.prop('disabled', false);
-                $('#csi-compare-status').html('<div class="notice notice-success"><p>Compared successfully.' + esc(otherNote) +
+                $('#csi-compare-status').html('<div class="notice notice-success"><p>Compared successfully.' +
                     ' Run "Scan Calendar" (step 5) then Compare again to also include Calendar Events.</p></div>');
             }
         }).fail(function () {
@@ -968,7 +994,7 @@
         var $results = $('#csi-diff-update-results-' + bucket);
         var ids = [];
         $('#csi-diff-list-' + bucket + ' .csi-diff-checkbox:checked').each(function () {
-            ids.push({ id: $(this).data('id').toString(), title: $(this).closest('label').text() });
+            ids.push({ id: $(this).data('id').toString(), title: $(this).data('title').toString() });
         });
         if (!ids.length) {
             $btn.prop('disabled', false);
@@ -1034,31 +1060,44 @@
         closeDiffDetail($(this).closest('.csi-diff-detail'));
     });
 
-    function runDiffUpdateBatch(bucket, action, param, kind, values, offset, log) {
+    // What each kind of WordPress item is created/updated with, and which
+    // step's settings it uses. A Compare & Update section's items default to
+    // its own target, but new items can be switched ("Add as").
+    var diffTargets = {
+        page:    { label: 'Page', action: 'csi_import_batch', param: 'refs', value: function (id) { return 'page:' + id; } },
+        post:    { label: 'Post', action: 'csi_import_posts_batch', param: 'only_page_ids', value: function (id) { return id; } },
+        vacancy: { label: 'Vacancy', action: 'csi_import_vacancies_batch', param: 'only_page_ids', value: function (id) { return id; } },
+        event:   { label: 'Event', action: 'csi_import_calendar_batch', param: 'only_event_ids', value: function (id) { return id; } }
+    };
+    var bucketTargets = { pages: 'page', posts: 'post', vacancies: 'vacancy', other: 'post', events: 'event' };
+
+    function runDiffUpdateBatch(bucket, target, values, offset, log, onDone) {
         var batchSize = 20;
         var total = values.length;
         var slice = values.slice(offset, offset + batchSize);
+        var t = diffTargets[target];
+        var label = t.label + 's';
 
         var data = {
-            action: action,
+            action: t.action,
             nonce: csiAjax.nonce,
             offset: 0,
             batch_size: batchSize,
-            cache_key: (kind === 'event') ? calendarCacheKey : cacheKey,
-            old_cache_key: (kind === 'event') ? oldEventsCacheKey : oldPagesCacheKey,
+            cache_key: (target === 'event') ? calendarCacheKey : cacheKey,
+            old_cache_key: (target === 'event') ? oldEventsCacheKey : oldPagesCacheKey,
             force_replace: $('#csi-diff-force-replace-' + bucket).is(':checked') ? '1' : '0'
         };
-        data[param] = slice;
+        data[t.param] = slice.map(t.value);
 
-        if (bucket === 'posts') {
+        if (target === 'post') {
             data.folder_id = $('#csi-posts-folder').val();
             data.default_status = $('#csi-posts-default-status').val();
-        } else if (bucket === 'vacancies') {
+        } else if (target === 'vacancy') {
             data.folder_id = $('#csi-vacancies-folder').val();
             data.default_status = $('#csi-vacancies-default-status').val();
-        } else if (bucket === 'events') {
+        } else if (target === 'event') {
             data.default_status = $('#csi-calendar-default-status').val();
-        } else if (bucket === 'pages') {
+        } else {
             data.default_status = $('#csi-default-status').val();
             data.block_pattern = $('#csi-block-pattern').val();
         }
@@ -1069,19 +1108,20 @@
 
         $.post(csiAjax.ajaxurl, data).done(function (resp) {
             if (!resp.success) {
-                log.push('<div class="notice notice-error"><p>' + esc(resp.data.message) + '</p></div>');
+                log.push('<div class="notice notice-error"><p>' + esc(label + ': ' + resp.data.message) + '</p></div>');
                 $(resultsBox).html(log.join(''));
+                onDone();
                 return;
             }
 
             var newOffset = offset + slice.length;
             var pct = total > 0 ? Math.round((newOffset / total) * 100) : 100;
             $(progressBar).css('width', pct + '%');
-            $(progressText).text(pct + '% (' + newOffset + ' / ' + total + ')');
+            $(progressText).text(label + ': ' + pct + '% (' + newOffset + ' / ' + total + ')');
 
             resp.data.results.forEach(function (r) {
                 if (r.success) {
-                    log.push('<div class="csi-log-item csi-log-ok">' + r.action + ': ' + esc(r.title || r.ref) + (r.draft ? ' (draft)' : '') + '</div>');
+                    log.push('<div class="csi-log-item csi-log-ok">' + esc(t.label) + ' ' + r.action + ': ' + esc(r.title || r.ref) + (r.draft ? ' (draft)' : '') + '</div>');
                 } else {
                     log.push('<div class="csi-log-item csi-log-error">' + esc(r.title || r.ref) + ': ' + esc(r.error) + '</div>');
                 }
@@ -1089,28 +1129,32 @@
             $(resultsBox).html(log.join(''));
 
             if (newOffset < total) {
-                runDiffUpdateBatch(bucket, action, param, kind, values, newOffset, log);
+                runDiffUpdateBatch(bucket, target, values, newOffset, log, onDone);
             } else {
-                $(progressText).text('Done — ' + total + ' item(s) processed.');
+                onDone();
             }
         }).fail(function () {
-            log.push('<div class="notice notice-error"><p>Batch request failed at offset ' + offset + '. Click Update Selected again to resume.</p></div>');
+            log.push('<div class="notice notice-error"><p>' + esc(label) + ' batch request failed at offset ' + offset + '. Click Update Selected again to resume.</p></div>');
             $(resultsBox).html(log.join(''));
+            onDone();
         });
     }
 
     $(document).on('click', '.csi-diff-update-btn', function () {
-        var $btn = $(this);
-        var bucket = $btn.data('bucket');
-        var action = $btn.data('action');
-        var param = $btn.data('param');
-        var kind = $btn.data('kind');
+        var bucket = $(this).data('bucket');
 
-        var values = [];
+        // Group the ticked items by what they'll be created/updated as.
+        var groups = {};
+        var count = 0;
         $('#csi-diff-list-' + bucket + ' .csi-diff-checkbox:checked').each(function () {
-            values.push((param === 'refs' ? $(this).data('ref') : $(this).data('id')).toString());
+            // Already in WordPress: always update it as the type it already
+            // is. Otherwise whatever "Add as" says, or the section's default.
+            var $as = $(this).closest('.csi-diff-item').find('.csi-diff-as');
+            var target = $(this).data('wp-type') || ($as.length ? $as.val() : bucketTargets[bucket]);
+            (groups[target] = groups[target] || []).push($(this).data('id').toString());
+            count++;
         });
-        if (!values.length) {
+        if (!count) {
             return;
         }
 
@@ -1119,7 +1163,15 @@
         $('#csi-diff-progress-text-' + bucket).text('Starting...');
         $('#csi-diff-update-results-' + bucket).empty();
 
-        runDiffUpdateBatch(bucket, action, param, kind, values, 0, []);
+        var log = [];
+        var targets = Object.keys(groups);
+        (function next(i) {
+            if (i >= targets.length) {
+                $('#csi-diff-progress-text-' + bucket).text('Done — ' + count + ' item(s) processed.');
+                return;
+            }
+            runDiffUpdateBatch(bucket, targets[i], groups[targets[i]], 0, log, function () { next(i + 1); });
+        })(0);
     });
 
 })(jQuery);

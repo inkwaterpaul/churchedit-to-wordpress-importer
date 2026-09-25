@@ -274,32 +274,32 @@ class CSI_Admin_UI {
                         $csi_diff_buckets = array(
                             'pages'     => array(
                                 'label'  => __('Pages', 'churchedit-sql-importer'),
-                                'action' => 'csi_import_batch',
-                                'param'  => 'refs',
                                 'kind'   => 'page',
                             ),
                             'posts'     => array(
                                 'label'  => __('Posts', 'churchedit-sql-importer'),
-                                'action' => 'csi_import_posts_batch',
-                                'param'  => 'only_page_ids',
                                 'kind'   => 'page',
                             ),
                             'vacancies' => array(
                                 'label'  => __('Vacancies', 'churchedit-sql-importer'),
-                                'action' => 'csi_import_vacancies_batch',
-                                'param'  => 'only_page_ids',
                                 'kind'   => 'page',
+                            ),
+                            'other'     => array(
+                                'label'  => __('Other', 'churchedit-sql-importer'),
+                                'kind'   => 'page',
+                                'description' => __('Changed or new items outside the Pages tree and the selected Posts/Vacancies folders (e.g. a news folder when no Posts folder is selected). New ones are added as posts unless you choose otherwise.', 'churchedit-sql-importer'),
                             ),
                             'events'    => array(
                                 'label'  => __('Calendar Events', 'churchedit-sql-importer'),
-                                'action' => 'csi_import_calendar_batch',
-                                'param'  => 'only_event_ids',
                                 'kind'   => 'event',
                             ),
                         );
                         foreach ($csi_diff_buckets as $csi_bucket_key => $csi_bucket) :
                             ?>
                             <h3><?php echo esc_html($csi_bucket['label']); ?></h3>
+                            <?php if (!empty($csi_bucket['description'])) : ?>
+                                <p class="description"><?php echo esc_html($csi_bucket['description']); ?></p>
+                            <?php endif; ?>
                             <div id="csi-diff-summary-<?php echo esc_attr($csi_bucket_key); ?>" class="csi-diff-summary"></div>
                             <p class="csi-diff-select-bar">
                                 <a href="#" class="csi-diff-select" data-bucket="<?php echo esc_attr($csi_bucket_key); ?>" data-select="all"><?php esc_html_e('Select all', 'churchedit-sql-importer'); ?></a>
@@ -319,10 +319,7 @@ class CSI_Admin_UI {
                                 </label>
                                 <br>
                                 <button type="button" class="button button-primary csi-diff-update-btn"
-                                    data-bucket="<?php echo esc_attr($csi_bucket_key); ?>"
-                                    data-action="<?php echo esc_attr($csi_bucket['action']); ?>"
-                                    data-param="<?php echo esc_attr($csi_bucket['param']); ?>"
-                                    data-kind="<?php echo esc_attr($csi_bucket['kind']); ?>">
+                                    data-bucket="<?php echo esc_attr($csi_bucket_key); ?>">
                                     <?php echo esc_html(sprintf(__('Update Selected %s', 'churchedit-sql-importer'), $csi_bucket['label'])); ?>
                                 </button>
                             </p>

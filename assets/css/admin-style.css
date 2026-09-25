@@ -29,6 +29,7 @@
 .csi-diff-list { max-height: 400px; overflow-y: auto; border: 1px solid #dcdcde; background: #fafafa; padding: 10px; margin-bottom: 10px; }
 .csi-diff-item { padding: 4px 0; border-bottom: 1px solid #f0f0f1; }
 .csi-diff-item:last-child { border-bottom: none; }
+.csi-diff-breadcrumb { font-size: 11px; color: #646970; margin: 0 0 1px 24px; }
 .csi-diff-fields { color: #646970; font-size: 12px; }
 .csi-diff-view-toggle { margin-left: 8px; font-size: 12px; }
 .csi-diff-list { position: relative; }
@@ -39,6 +40,8 @@
 .csi-diff-detail .diff { width: 100%; }
 .csi-diff-field { margin-bottom: 10px; }
 .csi-diff-removed { font-size: 12px; color: #646970; }
+.csi-diff-as-label { margin-left: 8px; font-size: 12px; }
+.csi-diff-as { font-size: 12px; min-height: 24px; line-height: 1.5; padding: 0 20px 0 6px; }
 .csi-diff-new { color: #2271b1; font-weight: 600; }
 .csi-todo-post { margin: 0 0 6px; }
 .csi-todo-summary { font-weight: 600; margin: 4px 0 8px; }
