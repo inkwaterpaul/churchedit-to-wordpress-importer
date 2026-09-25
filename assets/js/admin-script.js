@@ -669,8 +669,9 @@
         // "Added" items get a checkbox too, same as changed ones — "Update
         // Selected" creates them (the import handlers insert whenever no
         // existing post is found for the ref/id, same as the main import
-        // steps do), it doesn't only update. There's no prior version to
-        // diff against, so no "view changes" link here.
+        // steps do), it doesn't only update. Their "view changes" panel
+        // compares against an empty old version, so it lists everything
+        // (and every linked file) as new.
         data.added.forEach(function (item) {
             html += '<div class="csi-diff-item">' + renderBreadcrumb(item) +
                 '<label><input type="checkbox" class="csi-diff-checkbox" checked' +
@@ -679,6 +680,8 @@
                 esc(item.title || item.ref) +
                 ' <span class="csi-diff-fields csi-diff-new">(new)</span></label>' +
                 renderAddAs(bucketKey, item) +
+                ' <a href="#" class="csi-diff-view-toggle" data-kind="' + kind + '" data-id="' + esc(item.id) + '">view changes</a>' +
+                '<div class="csi-diff-detail" style="display:none;"></div>' +
                 '</div>';
         });
         if (data.removed.length) {

@@ -446,9 +446,9 @@ class CSI_AJAX_Handler {
         $cache_key     = isset($_POST['cache_key']) ? sanitize_text_field($_POST['cache_key']) : '';
 
         $old_map = CSI_Cache::load($old_cache_key);
-        if (!$old_map || !isset($old_map[$id])) {
+        if (!$old_map) {
             ob_end_clean();
-            wp_send_json_error(array('message' => __('Old item data not found — please re-run Compare.', 'churchedit-sql-importer')));
+            wp_send_json_error(array('message' => __('Old export data not found — please re-run Compare.', 'churchedit-sql-importer')));
         }
 
         if ($kind === 'event') {
@@ -488,8 +488,13 @@ class CSI_AJAX_Handler {
             'meta_query'     => array(array('key' => $meta_key, 'value' => $id)),
         ));
 
+        // A new item isn't in the old export at all — compare it against
+        // an empty one, so everything in it (and every file it links to)
+        // counts as added.
+        $old_row = isset($old_map[$id]) ? $old_map[$id] : array_fill_keys(array_keys($new_map[$id]), '');
+
         return array(
-            'old'           => $old_map[$id],
+            'old'           => $old_row,
             'new'           => $new_map[$id],
             'fields'        => $fields,
             'content_field' => $content_field,
