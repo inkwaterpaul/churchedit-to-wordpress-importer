@@ -28,6 +28,7 @@ require_once CSI_PLUGIN_DIR . 'includes/class-sql-dump-parser.php';
 require_once CSI_PLUGIN_DIR . 'includes/class-diff-engine.php';
 require_once CSI_PLUGIN_DIR . 'includes/class-hierarchy-resolver.php';
 require_once CSI_PLUGIN_DIR . 'includes/class-content-converter.php';
+require_once CSI_PLUGIN_DIR . 'includes/class-content-merger.php';
 require_once CSI_PLUGIN_DIR . 'includes/class-page-links-extractor.php';
 require_once CSI_PLUGIN_DIR . 'includes/class-page-links-resolver.php';
 require_once CSI_PLUGIN_DIR . 'includes/class-importer.php';

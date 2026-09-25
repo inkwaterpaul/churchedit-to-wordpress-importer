@@ -294,9 +294,19 @@ class CSI_Admin_UI {
                             ?>
                             <h3><?php echo esc_html($csi_bucket['label']); ?></h3>
                             <div id="csi-diff-summary-<?php echo esc_attr($csi_bucket_key); ?>" class="csi-diff-summary"></div>
+                            <p class="csi-diff-select-bar">
+                                <a href="#" class="csi-diff-select" data-bucket="<?php echo esc_attr($csi_bucket_key); ?>" data-select="all"><?php esc_html_e('Select all', 'churchedit-sql-importer'); ?></a>
+                                |
+                                <a href="#" class="csi-diff-select" data-bucket="<?php echo esc_attr($csi_bucket_key); ?>" data-select="none"><?php esc_html_e('Select none', 'churchedit-sql-importer'); ?></a>
+                                <span class="csi-diff-selected-count" id="csi-diff-selected-count-<?php echo esc_attr($csi_bucket_key); ?>"></span>
+                            </p>
                             <div id="csi-diff-list-<?php echo esc_attr($csi_bucket_key); ?>" class="csi-diff-list"></div>
                             <p>
-                                <label><input type="checkbox" class="csi-diff-select-all" data-bucket="<?php echo esc_attr($csi_bucket_key); ?>"> <?php esc_html_e('Select all changed/new', 'churchedit-sql-importer'); ?></label>
+                                <label class="csi-diff-force-replace">
+                                    <input type="checkbox" id="csi-diff-force-replace-<?php echo esc_attr($csi_bucket_key); ?>">
+                                    <?php esc_html_e('Replace whole content (overwrites any edits made in WordPress)', 'churchedit-sql-importer'); ?>
+                                </label>
+                                <br>
                                 <button type="button" class="button button-primary csi-diff-update-btn"
                                     data-bucket="<?php echo esc_attr($csi_bucket_key); ?>"
                                     data-action="<?php echo esc_attr($csi_bucket['action']); ?>"

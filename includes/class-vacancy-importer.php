@@ -70,29 +70,18 @@ class CSI_Vacancy_Importer {
             $page_id = $page['page_id'];
             $ref = 'vacancy:' . $page_id;
 
-            // The block layout pattern (sidebar page-navigation wrapper) is a
-            // Pages-only concept — Vacancies don't use it.
-            $body    = CSI_Content_Converter::convert($page['page_content']);
-            // The 'vacancy' post type's registered block template starts with
-            // octopus/vacancy-closing-date. wp_insert_post() doesn't apply
-            // registered templates to programmatically-created posts, so it's
-            // added explicitly here. Its attributes are meta-sourced (see
-            // block.json), so the bare self-closing comment is enough — the
-            // actual values come from the postmeta set below.
-            $content = "<!-- wp:octopus/vacancy-closing-date /-->\n\n" . $body;
+            $fields  = self::build_fields($page);
+            $content = $fields['post_content'];
             $status  = (!empty($page['page_access']) && $page['page_access'] !== 'everyone') ? 'draft' : $options['default_status'];
 
             $closing_date = self::extract_closing_date($page['page_content']);
 
             $existing = self::find_existing_post($ref);
 
-            $post_data = array(
-                'post_title'   => wp_strip_all_tags($page['page_title']),
-                'post_content' => $content,
-                'post_excerpt' => !empty($page['page_summary']) ? wp_strip_all_tags($page['page_summary']) : '',
+            $post_data = array_merge($fields, array(
                 'post_status'  => $status,
                 'post_type'    => 'vacancy',
-            );
+            ));
 
             // See CSI_Post_Importer::import_post() for why this is dropped
             // rather than set on a targeted-update pass.
@@ -101,6 +90,22 @@ class CSI_Vacancy_Importer {
                 // Report the status the post actually keeps, not the one
                 // that would have been applied had it not been preserved.
                 $status = get_post($existing)->post_status;
+            }
+
+            // Compare & Update: apply only what changed between the old and
+            // new export (see CSI_Content_Merger). The closing date is only
+            // rewritten if the source's closing date itself changed.
+            $merging = $existing && CSI_Importer::is_merge_update($options);
+            if ($merging) {
+                $old_page = isset($options['old_rows'][$page_id]) ? $options['old_rows'][$page_id] : null;
+                $prepared = CSI_Content_Merger::prepare_update($existing, $old_page ? self::build_fields($old_page) : null, $fields, $ref, $page['page_title']);
+                if ($prepared['result']) {
+                    return $prepared['result'];
+                }
+                $post_data = array_merge(array('ID' => $existing), $prepared['fields']);
+                $update_closing_date = self::extract_closing_date($old_page['page_content']) != $closing_date;
+            } else {
+                $update_closing_date = true;
             }
 
             if ($existing) {
@@ -117,7 +122,7 @@ class CSI_Vacancy_Importer {
                 return array('ref' => $ref, 'success' => false, 'error' => $post_id->get_error_message());
             }
 
-            if (!empty($category_name)) {
+            if (!$merging && !empty($category_name)) {
                 $term_id = self::ensure_category_term($category_name);
                 if ($term_id) {
                     wp_set_object_terms($post_id, array($term_id), 'vacancy-category');
@@ -128,7 +133,9 @@ class CSI_Vacancy_Importer {
             update_post_meta($post_id, '_ce_page_id', $page_id);
             update_post_meta($post_id, '_ce_folder_id', $page['folder_id']);
 
-            if ($closing_date) {
+            if (!$update_closing_date) {
+                // Left as editors currently have it.
+            } elseif ($closing_date) {
                 update_post_meta($post_id, '_octopus_vacancy_closing_date', $closing_date['date_string']);
                 update_post_meta($post_id, '_octopus_vacancy_date_timestamp', $closing_date['timestamp_ms']);
                 update_post_meta($post_id, '_octopus_vacancy_has_deadline', true);
@@ -138,6 +145,7 @@ class CSI_Vacancy_Importer {
                 update_post_meta($post_id, '_octopus_vacancy_has_deadline', false);
             }
 
+            $content = get_post_field('post_content', $post_id, 'raw');
             $pending = CSI_Content_Converter::extract_pending_media($content);
             if (!empty($pending['images'])) {
                 update_post_meta($post_id, '_ce_pending_images', $pending['images']);
@@ -167,6 +175,27 @@ class CSI_Vacancy_Importer {
         } catch (Error $e) {
             return array('ref' => 'vacancy:' . $page['page_id'], 'success' => false, 'error' => 'Fatal error: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Title/content/excerpt exactly as an import of this page row produces
+     * them — also run on the OLD export's row during Compare & Update.
+     */
+    private static function build_fields($page) {
+        // The 'vacancy' post type's registered block template starts with
+        // octopus/vacancy-closing-date. wp_insert_post() doesn't apply
+        // registered templates to programmatically-created posts, so it's
+        // added explicitly here. Its attributes are meta-sourced (see
+        // block.json), so the bare self-closing comment is enough — the
+        // actual values come from the postmeta set in import_vacancy().
+        //
+        // The block layout pattern (sidebar page-navigation wrapper) is a
+        // Pages-only concept — Vacancies don't use it.
+        return array(
+            'post_title'   => wp_strip_all_tags($page['page_title']),
+            'post_content' => "<!-- wp:octopus/vacancy-closing-date /-->\n\n" . CSI_Content_Converter::convert($page['page_content']),
+            'post_excerpt' => !empty($page['page_summary']) ? wp_strip_all_tags($page['page_summary']) : '',
+        );
     }
 
     /**

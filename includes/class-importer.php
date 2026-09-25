@@ -132,12 +132,12 @@ class CSI_Importer {
         return array('ref' => $ref, 'post_id' => $post_id, 'title' => $title, 'action' => $action, 'success' => true);
     }
 
-    private static function import_page($page_id, $resolved, $options) {
-        $page = $resolved['pages'][$page_id];
-        $ref  = 'page:' . $page_id;
-
-        $parent_post = self::resolve_parent_post_id($page['parent_ref']);
-
+    /**
+     * Title/content/excerpt exactly as an import of this page row produces
+     * them — also run on the OLD export's row during Compare & Update, so
+     * the merge knows what was originally imported.
+     */
+    private static function build_page_fields($page, $options) {
         // Pull out "flexContainer" page-link card grids before normal block
         // conversion — they need a second pass once every page has a WP post
         // ID (see CSI_Page_Links_Resolver), so a numbered placeholder comment
@@ -153,16 +153,35 @@ class CSI_Importer {
         foreach ($extraction['groups'] as $i => $group) {
             $body .= "\n\n<!-- ce:page-links:{$i} -->\n\n";
         }
-        $content = self::apply_block_pattern($body, $options);
+
+        return array(
+            'fields' => array(
+                'post_title'   => wp_strip_all_tags($page['page_title']),
+                'post_content' => self::apply_block_pattern($body, $options),
+                'post_excerpt' => self::generate_excerpt($extraction['html']),
+            ),
+            'groups' => $extraction['groups'],
+        );
+    }
+
+    private static function import_page($page_id, $resolved, $options) {
+        $page = $resolved['pages'][$page_id];
+        $ref  = 'page:' . $page_id;
+
+        $parent_post = self::resolve_parent_post_id($page['parent_ref']);
+
+        $built   = self::build_page_fields($page, $options);
+        $content = $built['fields']['post_content'];
+        $extraction = array('groups' => $built['groups']);
 
         $status = $page['force_draft'] ? 'draft' : $options['default_status'];
 
         $existing = self::find_existing_post($ref);
 
         $post_data = array(
-            'post_title'   => wp_strip_all_tags($page['page_title']),
+            'post_title'   => $built['fields']['post_title'],
             'post_content' => $content,
-            'post_excerpt' => self::generate_excerpt($extraction['html']),
+            'post_excerpt' => $built['fields']['post_excerpt'],
             'post_status'  => $status,
             'post_type'    => 'page',
             'post_parent'  => $parent_post,
@@ -181,6 +200,20 @@ class CSI_Importer {
             $status = get_post($existing)->post_status;
         }
 
+        // Compare & Update: only apply what changed between the old and new
+        // export, leaving the rest of the page (and any edits made to it in
+        // WordPress) alone — see CSI_Content_Merger.
+        if ($existing && self::is_merge_update($options)) {
+            $old_fields = isset($options['old_rows'][$page_id])
+                ? self::build_page_fields($options['old_rows'][$page_id], $options)['fields']
+                : null;
+            $prepared = CSI_Content_Merger::prepare_update($existing, $old_fields, $built['fields'], $ref, $page['page_title']);
+            if ($prepared['result']) {
+                return $prepared['result'];
+            }
+            $post_data = array_merge(array('ID' => $existing), $prepared['fields']);
+        }
+
         if ($existing) {
             $post_data['ID'] = $existing;
             $post_id = wp_update_post($post_data, true);
@@ -193,6 +226,14 @@ class CSI_Importer {
 
         if (is_wp_error($post_id)) {
             return array('ref' => $ref, 'success' => false, 'error' => $post_id->get_error_message());
+        }
+
+        // Pending media / page-link placeholders are read from what was
+        // actually saved: after a merge, that's the existing content with
+        // only the changed parts swapped in.
+        $content = get_post_field('post_content', $post_id, 'raw');
+        if (strpos($content, '<!-- ce:page-links:') === false) {
+            $extraction['groups'] = array();
         }
 
         update_post_meta($post_id, '_ce_source_ref', $ref);
@@ -237,6 +278,14 @@ class CSI_Importer {
             'success' => true,
             'draft'   => ($status === 'draft'),
         );
+    }
+
+    /**
+     * A Compare & Update pass merges changes in rather than replacing the
+     * whole post, unless the user explicitly asked to replace it.
+     */
+    public static function is_merge_update($options) {
+        return !empty($options['preserve_on_update']) && empty($options['force_replace']);
     }
 
     /**

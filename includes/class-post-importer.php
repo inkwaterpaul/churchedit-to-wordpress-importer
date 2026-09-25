@@ -80,6 +80,26 @@ class CSI_Post_Importer {
                 $status = get_post($existing)->post_status;
             }
 
+            // Compare & Update: apply only what changed between the old and
+            // new export (see CSI_Content_Merger). Post date and categories
+            // are left as they are.
+            $merging = $existing && CSI_Importer::is_merge_update($options);
+            if ($merging) {
+                $old_page   = isset($options['old_rows'][$page_id]) ? $options['old_rows'][$page_id] : null;
+                $old_fields = $old_page ? array(
+                    'post_title'   => wp_strip_all_tags($old_page['page_title']),
+                    'post_content' => CSI_Content_Converter::convert($old_page['page_content']),
+                ) : null;
+                $prepared = CSI_Content_Merger::prepare_update($existing, $old_fields, array(
+                    'post_title'   => $post_data['post_title'],
+                    'post_content' => $content,
+                ), $ref, $page['page_title']);
+                if ($prepared['result']) {
+                    return $prepared['result'];
+                }
+                $post_data = array_merge(array('ID' => $existing), $prepared['fields']);
+            }
+
             if ($existing) {
                 $post_data['ID'] = $existing;
                 $post_id = wp_update_post($post_data, true);
@@ -106,13 +126,14 @@ class CSI_Post_Importer {
             // whatever WordPress already set (Uncategorized on creation, or
             // an editor's own categorisation on update) rather than being
             // forced back to blank.
-            if (!empty($page['tags'])) {
+            if (!$merging && !empty($page['tags'])) {
                 $category_ids = self::resolve_category_ids($page['tags']);
                 if (!empty($category_ids)) {
                     wp_set_post_categories($post_id, $category_ids, false);
                 }
             }
 
+            $content = get_post_field('post_content', $post_id, 'raw');
             $pending = CSI_Content_Converter::extract_pending_media($content);
             if (!empty($pending['images'])) {
                 update_post_meta($post_id, '_ce_pending_images', $pending['images']);
