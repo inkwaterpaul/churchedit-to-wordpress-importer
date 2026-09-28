@@ -222,26 +222,62 @@ class CSI_Media_Linker {
      * stored path like "2024/05/img2.jpg" (which also ends in "2.jpg"),
      * silently linking the wrong image. This was the cause of images
      * occasionally getting mixed up on import.
+     *
+     * Images are also matched when they've been converted or resized before
+     * upload: "photo.png" matches "photo.jpg"/"photo.jpeg"/"photo.webp" etc.,
+     * and WordPress's big-image copy "photo-scaled.jpg". Matching ignores
+     * case ("IMG_1.JPG" = "img_1.jpg"). An exact name always wins over a
+     * converted one; among equals the newest upload wins.
      */
     public static function find_attachment_by_filename($filename) {
         global $wpdb;
 
-        foreach (array_unique(array($filename, sanitize_file_name($filename))) as $candidate) {
-            $rows = $wpdb->get_results($wpdb->prepare(
-                "SELECT post_id, meta_value FROM {$wpdb->postmeta}
-                 WHERE meta_key = '_wp_attached_file' AND meta_value LIKE %s
-                 ORDER BY post_id DESC",
-                '%' . $wpdb->esc_like($candidate)
-            ));
+        $image_ext = array('jpg', 'jpeg', 'webp', 'png', 'gif');
 
-            foreach ($rows as $row) {
-                if (wp_basename($row->meta_value) === $candidate) {
-                    return (int) $row->post_id;
-                }
+        // Acceptable basenames (lowercased), best match first.
+        $names = array();
+        foreach (array_unique(array($filename, sanitize_file_name($filename))) as $candidate) {
+            $names[] = strtolower($candidate);
+
+            $ext = strtolower(pathinfo($candidate, PATHINFO_EXTENSION));
+            if (!in_array($ext, $image_ext, true)) {
+                continue;
+            }
+            $stem = strtolower(pathinfo($candidate, PATHINFO_FILENAME));
+            $names[] = $stem . '-scaled.' . $ext;
+            foreach (array_diff($image_ext, array($ext)) as $alt) {
+                $names[] = $stem . '.' . $alt;
+                $names[] = $stem . '-scaled.' . $alt;
+            }
+        }
+        $names = array_values(array_unique($names));
+        $rank  = array_flip($names);
+
+        $likes = array();
+        $args  = array();
+        foreach ($names as $name) {
+            $likes[] = 'meta_value LIKE %s';
+            $args[]  = '%' . $wpdb->esc_like($name);
+        }
+
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT post_id, meta_value FROM {$wpdb->postmeta}
+             WHERE meta_key = '_wp_attached_file' AND (" . implode(' OR ', $likes) . ")
+             ORDER BY post_id DESC",
+            $args
+        ));
+
+        $best_id   = false;
+        $best_rank = PHP_INT_MAX;
+        foreach ($rows as $row) {
+            $basename = strtolower(wp_basename($row->meta_value));
+            if (isset($rank[$basename]) && $rank[$basename] < $best_rank) {
+                $best_rank = $rank[$basename];
+                $best_id   = (int) $row->post_id;
             }
         }
 
-        return false;
+        return $best_id;
     }
 
     /**
