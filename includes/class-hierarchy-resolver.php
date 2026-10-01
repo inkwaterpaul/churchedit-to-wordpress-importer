@@ -421,7 +421,7 @@ class CSI_Hierarchy_Resolver {
      * When $flatten_noshow is true, any folder whose name contains "-noshow"
      * is omitted from the path (matching ChurchEdit's live URL behavior).
      */
-    private static function folder_url_segments($resolved, $folder_id, $flatten_noshow) {
+    public static function folder_url_segments($resolved, $folder_id, $flatten_noshow) {
         $segments = array();
         $seen = array();
         while ($folder_id !== null && !isset($seen[$folder_id])) {

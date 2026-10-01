@@ -26,6 +26,7 @@ class CSI_AJAX_Handler {
         add_action('wp_ajax_csi_compare_calendar', array(__CLASS__, 'handle_compare_calendar'));
         add_action('wp_ajax_csi_diff_view_item', array(__CLASS__, 'handle_diff_view_item'));
         add_action('wp_ajax_csi_fetch_item_files', array(__CLASS__, 'handle_fetch_item_files'));
+        add_action('wp_ajax_csi_generate_redirects', array(__CLASS__, 'handle_generate_redirects'));
     }
 
     /**
@@ -1160,6 +1161,40 @@ class CSI_AJAX_Handler {
                 'post_folders'    => $post_folders,
                 'vacancy_folders' => $vacancy_folders,
             ));
+        } catch (Exception $e) {
+            ob_end_clean();
+            wp_send_json_error(array('message' => 'Exception: ' . $e->getMessage()));
+        } catch (Error $e) {
+            ob_end_clean();
+            wp_send_json_error(array('message' => 'Fatal error: ' . $e->getMessage()));
+        }
+    }
+
+    /**
+     * Step 11: build the old-ChurchEdit-URL -> new-page-path redirect list
+     * from the parsed export (see CSI_Redirect_Generator), returned as text
+     * for the browser to offer as a download.
+     */
+    public static function handle_generate_redirects() {
+        ob_start();
+        try {
+            check_ajax_referer('csi_nonce', 'nonce');
+            if (!current_user_can('manage_options')) {
+                ob_end_clean();
+                wp_send_json_error(array('message' => __('Permission denied.', 'churchedit-sql-importer')));
+            }
+
+            $cache_key = isset($_POST['cache_key']) ? sanitize_text_field($_POST['cache_key']) : '';
+            $resolved  = CSI_Cache::load($cache_key);
+            if (!$resolved) {
+                ob_end_clean();
+                wp_send_json_error(array('message' => __('Parsed data not found — please re-run the parse step.', 'churchedit-sql-importer')));
+            }
+
+            $redirects = CSI_Redirect_Generator::build($resolved);
+
+            ob_end_clean();
+            wp_send_json_success($redirects);
         } catch (Exception $e) {
             ob_end_clean();
             wp_send_json_error(array('message' => 'Exception: ' . $e->getMessage()));

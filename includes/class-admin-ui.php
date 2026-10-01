@@ -331,6 +331,15 @@ class CSI_Admin_UI {
                         <?php endforeach; ?>
                     </div>
 
+                    <hr>
+
+                    <h2><?php esc_html_e('11. Redirects', 'churchedit-sql-importer'); ?></h2>
+                    <p class="description">
+                        <?php esc_html_e('ChurchEdit URLs use folder names (e.g. /whoweare/) while imported pages take their slug from the title (e.g. /who-we-are/). This builds one regex redirect per folder whose path changes, each carrying any subpages along with it. Uses the real page paths for anything already imported (including slugs edited since), and predicts the rest. Parse the SQL file in step 1 first.', 'churchedit-sql-importer'); ?>
+                    </p>
+                    <p><button type="button" class="button button-primary" id="csi-generate-redirects-btn"><?php esc_html_e('Generate Redirects', 'churchedit-sql-importer'); ?></button></p>
+                    <div id="csi-redirects-results"></div>
+
                 </div>
             </div>
         </div>

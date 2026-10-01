@@ -269,6 +269,38 @@
         runResolvePageLinksBatch([], 0, {links: 0, posts: 0});
     });
 
+    // ---- Step 11: Redirects (built server-side, downloaded as a .txt) ----
+
+    var redirectsUrl = null;
+
+    $(document).on('click', '#csi-generate-redirects-btn', function () {
+        var $results = $('#csi-redirects-results');
+        if (!cacheKey) {
+            $results.html('<div class="notice notice-error"><p>Parse the SQL file in step 1 first.</p></div>');
+            return;
+        }
+        $results.html('<p>Generating...</p>');
+
+        $.post(csiAjax.ajaxurl, {
+            action: 'csi_generate_redirects',
+            nonce: csiAjax.nonce,
+            cache_key: cacheKey
+        }).done(function (resp) {
+            if (!resp.success) {
+                $results.html('<div class="notice notice-error"><p>' + esc(resp.data.message) + '</p></div>');
+                return;
+            }
+            if (redirectsUrl) {
+                URL.revokeObjectURL(redirectsUrl);
+            }
+            redirectsUrl = URL.createObjectURL(new Blob([resp.data.text], {type: 'text/plain'}));
+            $results.html('<div class="notice notice-success"><p>' + resp.data.count + ' redirect(s) generated. ' +
+                '<a href="' + redirectsUrl + '" download="redirects.txt" class="button">Download redirects.txt</a></p></div>');
+        }).fail(function () {
+            $results.html('<div class="notice notice-error"><p>Request failed.</p></div>');
+        });
+    });
+
     // ---- Step 8: Link Media (pure filename lookup, no uploading — one post type per run) ----
 
     function runLinkMediaBatch(postType, excludeIds, processedSoFar, totals, missing) {
