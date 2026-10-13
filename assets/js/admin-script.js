@@ -668,7 +668,7 @@
         if (item.in_wp || bucketKey === 'events') {
             return '';
         }
-        var options = bucketKey === 'vacancies' ? ['vacancy', 'page', 'post'] : (bucketKey === 'other' ? ['post', 'page'] : ['page', 'post']);
+        var options = bucketKey === 'vacancies' ? ['vacancy', 'page', 'post'] : (bucketKey === 'other' ? ['post', 'page', 'vacancy'] : ['page', 'post', 'vacancy']);
         var html = ' <label class="csi-diff-as-label">Add as <select class="csi-diff-as">';
         options.forEach(function (t) {
             html += '<option value="' + t + '"' + (t === bucketTargets[bucketKey] ? ' selected' : '') + '>' + diffTargets[t].label + '</option>';

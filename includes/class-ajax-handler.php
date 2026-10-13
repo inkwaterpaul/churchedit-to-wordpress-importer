@@ -576,24 +576,36 @@ class CSI_AJAX_Handler {
             }
 
             $folder_id = isset($_POST['folder_id']) ? sanitize_text_field($_POST['folder_id']) : '';
-            if (!isset($resolved['folders'][$folder_id])) {
-                ob_end_clean();
-                wp_send_json_error(array('message' => __('Unknown folder.', 'churchedit-sql-importer')));
-            }
+            $has_folder = isset($resolved['folders'][$folder_id]);
 
-            $items = CSI_Vacancy_Importer::get_vacancy_items($resolved, $folder_id);
-
-            // Targeted-update pass from Compare & Update: restrict to only
-            // the page_ids the user selected there instead of the whole
-            // folder. It's also update-only in intent: existing vacancies
-            // keep their current status, only content changes.
+            // Targeted-update pass from Compare & Update: just the page_ids
+            // the user selected there instead of the whole folder. They
+            // needn't be in the Vacancies folder — a new item found elsewhere
+            // in the export can be explicitly added as a vacancy ("Add as" in
+            // the UI); those get no category. It's also update-only in
+            // intent: existing vacancies keep their current status, only
+            // content changes.
             $only_page_ids = isset($_POST['only_page_ids']) ? array_map('sanitize_text_field', (array) $_POST['only_page_ids']) : array();
             $is_diff_update = !empty($only_page_ids);
             if ($is_diff_update) {
-                $only_page_ids = array_flip($only_page_ids);
-                $items = array_values(array_filter($items, function ($item) use ($only_page_ids) {
-                    return isset($only_page_ids[$item['page_id']]);
-                }));
+                $categories = array();
+                if ($has_folder) {
+                    foreach (CSI_Vacancy_Importer::get_vacancy_items($resolved, $folder_id) as $item) {
+                        $categories[$item['page_id']] = $item['category'];
+                    }
+                }
+                $items = array();
+                foreach (array_unique($only_page_ids) as $pid) {
+                    if (isset($resolved['pages'][$pid])) {
+                        $items[] = array('page_id' => $pid, 'category' => isset($categories[$pid]) ? $categories[$pid] : null);
+                    }
+                }
+            } else {
+                if (!$has_folder) {
+                    ob_end_clean();
+                    wp_send_json_error(array('message' => __('Unknown folder.', 'churchedit-sql-importer')));
+                }
+                $items = CSI_Vacancy_Importer::get_vacancy_items($resolved, $folder_id);
             }
 
             $offset     = isset($_POST['offset']) ? absint($_POST['offset']) : 0;
